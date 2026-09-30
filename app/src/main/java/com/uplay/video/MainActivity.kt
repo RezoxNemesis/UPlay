@@ -31,6 +31,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -43,6 +44,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -68,6 +70,10 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.HomeRounded
+import androidx.compose.material.icons.filled.PlayCircleFilled
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material3.*
@@ -78,6 +84,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Stroke
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
@@ -128,6 +140,8 @@ private data class RecentVideo(
     val source: String = ""
 )
 
+private data class LibraryRow(val group: String, val entry: RecentVideo? = null)
+
 class MainActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
     private val incomingSharedUrl = mutableStateOf<String?>(null)
@@ -136,13 +150,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         incomingSharedUrl.value = extractSharedUrl(intent)
         val preferences = getSharedPreferences("uplay_settings", Context.MODE_PRIVATE)
+        val darkThemeState = mutableStateOf(
+            preferences.getBoolean(
+                "dark_theme",
+                (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            )
+        )
         player = ExoPlayer.Builder(this).build().apply {
             setPlaybackSpeed(preferences.getFloat("playback_speed", 1f).coerceIn(0.5f, 2f))
             repeatMode = if (preferences.getBoolean("repeat_video", false)) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         }
         setContent {
-            val systemDark = isSystemInDarkTheme()
-            MaterialTheme(colorScheme = if (systemDark) darkColorScheme(
+            val useDarkTheme = darkThemeState.value
+            MaterialTheme(colorScheme = if (useDarkTheme) darkColorScheme(
                 primary = Blue, secondary = Green, background = Ink, surface = Panel,
                 onBackground = Color.White, onSurface = Color.White
             ) else lightColorScheme(
@@ -153,6 +173,11 @@ class MainActivity : ComponentActivity() {
                     player = player,
                     incomingSharedUrl = incomingSharedUrl.value,
                     onSharedUrlConsumed = { incomingSharedUrl.value = null },
+                    darkTheme = useDarkTheme,
+                    onToggleTheme = { enabled ->
+                        darkThemeState.value = enabled
+                        preferences.edit().putBoolean("dark_theme", enabled).apply()
+                    },
                     onLocalVideo = { uri -> play(MediaItem.fromUri(uri)) },
                     onPlayUrl = { url -> play(MediaItem.fromUri(url)) }
                 )
@@ -197,6 +222,8 @@ private fun UPlayHome(
     player: ExoPlayer?,
     incomingSharedUrl: String?,
     onSharedUrlConsumed: () -> Unit,
+    darkTheme: Boolean,
+    onToggleTheme: (Boolean) -> Unit,
     onLocalVideo: (Uri) -> Unit,
     onPlayUrl: (String) -> Unit
 ) {
@@ -209,6 +236,7 @@ private fun UPlayHome(
     var playbackDuration by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val uiScope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
@@ -423,20 +451,27 @@ private fun UPlayHome(
                 player?.setMediaItem(MediaItem.fromUri(uri))
                 player?.prepare()
                 player?.playWhenReady = true
-                val title = queryDisplayName(context, uri)
-                val previous = recentAudios.firstOrNull { it.uri == uri.toString() }
-                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false,
-                    sizeBytes = queryFileSize(context, uri), location = uri.toString(), durationMs = previous?.durationMs ?: 0L)
-                recentAudios.removeAll { it.uri == entry.uri }
-                recentAudios.add(0, entry)
-                while (recentAudios.size > 50) recentAudios.removeAt(recentAudios.lastIndex)
-                saveRecentVideos(context, recentAudios, "recent_audio")
-                player?.seekTo(entry.positionMs)
                 selected = true
                 isMusicMode = true
                 currentTab = 1
                 controlsVisible = true
-                message = "Playing audio: $title"
+                message = "Opening audio…"
+                uiScope.launch {
+                    runCatching {
+                        val (title, size) = withContext(Dispatchers.IO) {
+                            queryDisplayName(context, uri) to queryFileSize(context, uri)
+                        }
+                        val previous = recentAudios.firstOrNull { it.uri == uri.toString() }
+                        val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false,
+                            sizeBytes = size, location = uri.toString(), durationMs = previous?.durationMs ?: 0L)
+                        recentAudios.removeAll { it.uri == entry.uri }
+                        recentAudios.add(0, entry)
+                        while (recentAudios.size > 50) recentAudios.removeAt(recentAudios.lastIndex)
+                        saveRecentVideos(context, recentAudios, "recent_audio")
+                        player?.seekTo(entry.positionMs)
+                        message = "Playing audio: $title"
+                    }.onFailure { message = "Couldn't read this audio file's details." }
+                }
             }.onFailure { message = "Couldn't open this audio file. Try another file." }
         }
     }
@@ -447,49 +482,63 @@ private fun UPlayHome(
                 runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                 onLocalVideo(uri)
                 isMusicMode = false
-                val title = queryDisplayName(context, uri)
-                val previous = recentVideos.firstOrNull { it.uri == uri.toString() }
-                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false,
-                    sizeBytes = queryFileSize(context, uri), location = uri.toString(), durationMs = previous?.durationMs ?: 0L)
-                recentVideos.removeAll { it.uri == entry.uri }
-                recentVideos.add(0, entry)
-                while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
-                saveRecentVideos(context, recentVideos)
-                player?.seekTo(entry.positionMs)
-            }.onSuccess {
                 selected = true
                 currentTab = 1
                 controlsVisible = true
-                message = "Loading selected video…"
+                message = "Opening video…"
+                uiScope.launch {
+                    runCatching {
+                        val (title, size) = withContext(Dispatchers.IO) {
+                            queryDisplayName(context, uri) to queryFileSize(context, uri)
+                        }
+                        val previous = recentVideos.firstOrNull { it.uri == uri.toString() }
+                        val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false,
+                            sizeBytes = size, location = uri.toString(), durationMs = previous?.durationMs ?: 0L)
+                        recentVideos.removeAll { it.uri == entry.uri }
+                        recentVideos.add(0, entry)
+                        while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                        saveRecentVideos(context, recentVideos)
+                        player?.seekTo(entry.positionMs)
+                        message = "Loading selected video: $title"
+                    }.onFailure { message = "Video opened, but its file details couldn't be read." }
+                }
             }.onFailure { message = "Couldn't open this video. Try another file." }
         }
     }
 
-    val systemDark = isSystemInDarkTheme()
+    val systemDark = darkTheme
     val appBackground = if (systemDark) Ink else Color(0xFFF7F9FD)
     Surface(modifier = Modifier.fillMaxSize(), color = appBackground) {
         Scaffold(containerColor = appBackground, contentWindowInsets = if (immersivePlayer) WindowInsets(0,0,0,0) else WindowInsets.safeDrawing, bottomBar = {
             if (!fullScreen && !(landscape && selected)) {
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(82.dp)) {
-                    val markerX by animateDpAsState(
-                        targetValue = maxWidth * ((currentTab + 0.5f) / 3f) - 7.dp,
-                        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
-                        label = "film-roll-tab-position"
-                    )
+                    val density = androidx.compose.ui.platform.LocalDensity.current
+                    val markerX = remember(maxWidth, density) {
+                        Animatable(with(density) { (maxWidth / 6f - 10.dp).toPx() })
+                    }
+                    LaunchedEffect(currentTab, maxWidth) {
+                        val target = with(density) { (maxWidth * ((currentTab + 0.5f) / 3f) - 10.dp).toPx() }
+                        markerX.animateTo(target, animationSpec = tween(durationMillis = 1050, easing = LinearEasing))
+                    }
                     NavigationBar(
                         modifier = Modifier.fillMaxSize(),
                         containerColor = if (systemDark) Color(0xFF0B101B) else Color.White,
                         tonalElevation = 0.dp
                     ) {
-                        NavigationBarItem(currentTab == 0, { currentTab = 0; rollRotation += 360f }, { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
-                        NavigationBarItem(currentTab == 1, { currentTab = 1; rollRotation += 360f }, { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Player") })
-                        NavigationBarItem(currentTab == 2, { currentTab = 2; rollRotation += 360f }, { Icon(Icons.Default.VideoLibrary, null) }, label = { Text("Library") })
+                        NavigationBarItem(currentTab == 0, { currentTab = 0; rollRotation += 1080f }, {
+                            Icon(Icons.Default.HomeRounded, null, modifier = Modifier.size(25.dp))
+                        }, label = { Text("Home") })
+                        NavigationBarItem(currentTab == 1, { currentTab = 1; rollRotation += 1080f }, {
+                            Icon(Icons.Default.PlayCircleFilled, null, modifier = Modifier.size(27.dp))
+                        }, label = { Text("Player") })
+                        NavigationBarItem(currentTab == 2, { currentTab = 2; rollRotation += 1080f }, {
+                            Icon(Icons.Default.VideoLibrary, null, modifier = Modifier.size(25.dp))
+                        }, label = { Text("Library") })
                     }
-                    Icon(
-                        Icons.Default.VideoLibrary,
-                        contentDescription = "Animated navigation film roll",
-                        tint = Color(0xFF65C9FF),
-                        modifier = Modifier.offset(x = markerX, y = 1.dp).size(13.dp).rotate(animatedRollRotation)
+                    FilmRollIndicator(
+                        modifier = Modifier.offset {
+                            IntOffset(markerX.value.roundToInt(), 2.dp.roundToPx())
+                        }.size(20.dp).graphicsLayer { rotationZ = animatedRollRotation }
                     )
                 }
             }
@@ -837,7 +886,7 @@ private fun UPlayHome(
                     }
                 }
             } else if (currentTab == 2) {
-                val dark = isSystemInDarkTheme()
+                val dark = darkTheme
                 val foreground = if (dark) Color(0xFFF7FAFF) else Color(0xFF101725)
                 val secondaryText = if (dark) Color(0xFF9BA9BC) else Color(0xFF68758A)
                 val cardSurface = if (dark) Panel else Color.White
@@ -853,7 +902,9 @@ private fun UPlayHome(
                         folderName.isNotBlank() && folderName.lowercase() !in listOf("download", "downloads") -> folderName
                         else -> entry.source.ifBlank { if (libraryMode == 0) "Other videos" else "Other music" }
                     }
-                }.toList()
+                }.toList().flatMap { (group, entries) ->
+                    listOf(LibraryRow(group)) + entries.map { LibraryRow(group, it) }
+                }
                 Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 18.dp, vertical = 14.dp)) {
                     Text("Your library", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = foreground)
                     Text("History, progress and file details in one place.", color = secondaryText, fontSize = 13.sp)
@@ -900,46 +951,50 @@ private fun UPlayHome(
                         }
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.weight(1f)) {
-                            items(mediaItems, key = { it.first }) { group ->
-                                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text(group.first, color = Color(0xFF45B8FF), fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
-                                    group.second.forEach { entry ->
-                                Surface(color = cardSurface, shape = RoundedCornerShape(19.dp), modifier = Modifier.fillMaxWidth()) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        MediaThumbnail(uri = entry.uri, title = entry.title, isMusic = libraryMode == 1, dark = dark)
-                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                            Text(entry.title, color = foreground, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                                            Text(
-                                                when {
-                                                    entry.durationMs > 0L && entry.positionMs > 0L ->
-                                                        "${((entry.positionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f) * 100).toInt()}% watched · Resume at ${formatTime(entry.positionMs)}"
-                                                    entry.remote -> "Online direct media"
-                                                    else -> "Local ${if (libraryMode == 0) "video" else "audio"}"
-                                                },
-                                                color = secondaryText, fontSize = 11.sp, maxLines = 2
-                                            )
-                                            Text("${if (entry.sizeBytes > 0L) formatBytes(entry.sizeBytes) else "Size unavailable"} · ${if (entry.remote) "Internet" else "On device"}",
-                                                color = secondaryText, fontSize = 10.sp, maxLines = 1)
-                                            Text(entry.location.ifBlank { entry.uri }, color = secondaryText, fontSize = 9.sp, maxLines = 1)
+                            items(mediaItems, key = { row -> row.entry?.uri ?: "group:${row.group}" }) { row ->
+                                val entry = row.entry
+                                if (entry == null) {
+                                    Text(row.group, color = Color(0xFF45B8FF), fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
+                                        modifier = Modifier.padding(top = 3.dp, bottom = 1.dp))
+                                } else {
+                                    Surface(color = cardSurface, shape = RoundedCornerShape(19.dp), modifier = Modifier.fillMaxWidth()) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            MediaThumbnail(uri = entry.uri, title = entry.title, isMusic = libraryMode == 1, dark = dark)
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                                Text(entry.title, color = foreground, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                                Text(
+                                                    when {
+                                                        entry.durationMs > 0L && entry.positionMs > 0L ->
+                                                            "${((entry.positionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f) * 100).toInt()}% watched · Resume at ${formatTime(entry.positionMs)}"
+                                                        entry.remote -> "Online direct media"
+                                                        else -> "Local ${if (libraryMode == 0) "video" else "audio"}"
+                                                    },
+                                                    color = secondaryText, fontSize = 11.sp, maxLines = 2
+                                                )
+                                                Text("${if (entry.sizeBytes > 0L) formatBytes(entry.sizeBytes) else "Size unavailable"} · ${if (entry.remote) "Internet" else "On device"}",
+                                                    color = secondaryText, fontSize = 10.sp, maxLines = 1)
+                                                Text(entry.location.ifBlank { entry.uri }, color = secondaryText, fontSize = 9.sp, maxLines = 1)
+                                            }
+                                            IconButton(onClick = {
+                                                runCatching {
+                                                    if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
+                                                    isMusicMode = libraryMode == 1
+                                                    player?.seekTo(entry.positionMs)
+                                                    selected = true
+                                                    currentTab = 1
+                                                    controlsVisible = true
+                                                    playbackError = null
+                                                    message = "Resuming ${entry.title}…"
+                                                }.onFailure { message = "Couldn't reopen this media file." }
+                                            }) {
+                                                Icon(Icons.Default.PlayArrow, "Play ${entry.title}", tint = Color(0xFF2EAAFF), modifier = Modifier.size(29.dp))
+                                            }
                                         }
-                                        IconButton(onClick = {
-                                            runCatching {
-                                                if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
-                                                isMusicMode = libraryMode == 1
-                                                player?.seekTo(entry.positionMs)
-                                                selected = true
-                                                currentTab = 1
-                                                controlsVisible = true
-                                                playbackError = null
-                                                message = "Resuming ${entry.title}…"
-                                            }.onFailure { message = "Couldn't reopen this media file." }
-                                        }) { Icon(Icons.Default.PlayArrow, "Play ${entry.title}", tint = Color(0xFF2EAAFF), modifier = Modifier.size(29.dp)) }
-                                    }
                                     }
                                 }
                             }
@@ -948,7 +1003,7 @@ private fun UPlayHome(
                 }
                 }
             } else {
-                val dark = isSystemInDarkTheme()
+                val dark = darkTheme
                 val foreground = if (dark) Color(0xFFF7FAFF) else Color(0xFF101725)
                 val secondaryText = if (dark) Color(0xFF9BA9BC) else Color(0xFF68758A)
                 val fieldSurface = if (dark) Color(0xFF111A29) else Color.White
@@ -966,26 +1021,43 @@ private fun UPlayHome(
                     modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Spacer(Modifier.weight(0.85f))
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-                        Box(
-                            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
-                                .background(if (dark) Color(0xFF13243A) else Color(0xFFE6F5FF)),
-                            contentAlignment = Alignment.Center
+                    Spacer(Modifier.weight(0.60f))
+                    Box(Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.align(Alignment.Center),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(11.dp)
                         ) {
-                            Text("U", fontSize = 34.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif,
-                                color = if (dark) Color.White else Color(0xFF111827))
-                            Text("▶", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF65C9FF),
-                                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 7.dp, bottom = 7.dp))
+                            Box(
+                                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
+                                    .background(if (dark) Color(0xFF13243A) else Color(0xFFE6F5FF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("U", fontSize = 34.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif,
+                                    color = if (dark) Color.White else Color(0xFF111827))
+                                Text("▶", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF65C9FF),
+                                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 7.dp, bottom = 7.dp))
+                            }
+                            Text(
+                                "UPlay",
+                                fontSize = 43.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.SansSerif,
+                                letterSpacing = (-1.8).sp,
+                                color = foreground
+                            )
                         }
-                        Text(
-                            "UPlay",
-                            fontSize = 43.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.SansSerif,
-                            letterSpacing = (-1.8).sp,
-                            color = foreground
-                        )
+                        IconButton(
+                            onClick = { onToggleTheme(!darkTheme) },
+                            modifier = Modifier.align(Alignment.CenterEnd).size(44.dp)
+                                .background(if (dark) Color(0xFF13243A) else Color(0xFFE6F5FF), CircleShape)
+                        ) {
+                            Icon(
+                                if (dark) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = if (dark) "Switch to light theme" else "Switch to dark theme",
+                                tint = if (dark) Color(0xFF8DD8FF) else Color(0xFF267CB7)
+                            )
+                        }
                     }
                     Spacer(Modifier.height(12.dp))
                     Text("YOUR PERSONAL MEDIA SPACE", color = if (dark) Color(0xFF8DD8FF) else Color(0xFF267CB7),
@@ -1004,7 +1076,49 @@ private fun UPlayHome(
                         OutlinedTextField(
                             value = url,
                             onValueChange = { url = it },
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(21.dp)).background(fieldSurface),
+                            modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(21.dp))
+                                .background(fieldSurface)
+                                .drawBehind {
+                                    val waveWidth = size.width * 0.30f
+                                    val waveX = wave * (size.width + waveWidth * 2f) - waveWidth
+                                    val midY = size.height * 0.5f
+                                    val amplitude = 8.dp.toPx()
+                                    val path = Path().apply {
+                                        moveTo(waveX, midY - amplitude * 0.35f)
+                                        cubicTo(
+                                            waveX + waveWidth * 0.18f, midY - amplitude * 1.7f,
+                                            waveX + waveWidth * 0.30f, midY + amplitude * 1.5f,
+                                            waveX + waveWidth * 0.48f, midY
+                                        )
+                                        cubicTo(
+                                            waveX + waveWidth * 0.66f, midY - amplitude * 1.4f,
+                                            waveX + waveWidth * 0.82f, midY + amplitude * 1.2f,
+                                            waveX + waveWidth, midY - amplitude * 0.25f
+                                        )
+                                        lineTo(waveX + waveWidth, midY + amplitude * 0.25f)
+                                        cubicTo(
+                                            waveX + waveWidth * 0.72f, midY + amplitude * 1.6f,
+                                            waveX + waveWidth * 0.34f, midY - amplitude * 1.2f,
+                                            waveX, midY + amplitude * 0.35f
+                                        )
+                                        close()
+                                    }
+                                    drawPath(
+                                        path,
+                                        Brush.horizontalGradient(
+                                            listOf(
+                                                Color(0x008DD8FF),
+                                                Color(0x668DD8FF),
+                                                Color(0x99C3F4FF),
+                                                Color(0x338DD8FF),
+                                                Color(0x008DD8FF)
+                                            ),
+                                            startX = waveX,
+                                            endX = waveX + waveWidth
+                                        )
+                                    )
+                                },
                             placeholder = { Text("Paste a video link…", color = secondaryText) },
                             leadingIcon = { Icon(Icons.Default.Link, contentDescription = "Video link", tint = Color(0xFF61BFFF)) },
                             trailingIcon = {
@@ -1139,7 +1253,7 @@ private fun UPlayHome(
     }
 
     if (settingsOpen) {
-        val dark = isSystemInDarkTheme()
+        val dark = darkTheme
         val sheetSurface = if (dark) Color(0xFF0E1624) else Color(0xFFF8FBFF)
         val cardSurface = if (dark) Color(0xFF172235) else Color.White
         val primaryText = if (dark) Color(0xFFF7FAFF) else Color(0xFF101725)
@@ -1384,6 +1498,30 @@ private fun RadialControl(
     }
 }
 
+@Composable
+private fun FilmRollIndicator(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val diameter = size.minDimension
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val radius = diameter * 0.43f
+        drawCircle(Color(0xFF70D2FF), radius = radius, center = center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = diameter * 0.13f))
+        drawCircle(Color(0xFFB8ECFF), radius = diameter * 0.15f, center = center)
+        val holeRadius = diameter * 0.075f
+        val orbit = diameter * 0.27f
+        for (index in 0 until 5) {
+            val angle = (Math.PI * 2.0 * index / 5.0) - Math.PI / 2.0
+            drawCircle(
+                Color(0xFFB8ECFF),
+                radius = holeRadius,
+                center = Offset(
+                    center.x + kotlin.math.cos(angle).toFloat() * orbit,
+                    center.y + kotlin.math.sin(angle).toFloat() * orbit
+                )
+            )
+        }
+    }
+}
+
 private fun extractSharedUrl(intent: Intent?): String? {
     if (intent == null || intent.action != Intent.ACTION_SEND) return null
     val sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
@@ -1510,7 +1648,9 @@ private fun queryMediaCollection(context: Context, collection: Uri, isAudio: Boo
             val sizeIndex = cursor.getColumnIndex(sizeColumn)
             val durationIndex = cursor.getColumnIndex(durationColumn)
             val pathIndex = if (Build.VERSION.SDK_INT >= 29) cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH) else -1
-            while (cursor.moveToNext()) {
+            var scannedCount = 0
+            while (scannedCount < 160 && cursor.moveToNext()) {
+                scannedCount += 1
                 val id = cursor.getLong(idIndex)
                 val title = cursor.getString(nameIndex)?.takeIf { it.isNotBlank() } ?: if (isAudio) "Audio" else "Video"
                 val path = if (pathIndex >= 0) cursor.getString(pathIndex).orEmpty().trim('/') else ""
