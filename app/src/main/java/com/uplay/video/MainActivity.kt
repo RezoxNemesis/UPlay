@@ -1,6 +1,10 @@
 package com.uplay.video
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
+import android.view.View
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -43,6 +47,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -106,6 +113,11 @@ private fun UPlayHome(
     var url by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("Choose a video or paste a direct video URL to begin.") }
     var selected by remember { mutableStateOf(false) }
+    var fullScreen by remember { mutableStateOf(false) }
+    var playbackPosition by remember { mutableLongStateOf(0L) }
+    var playbackDuration by remember { mutableLongStateOf(0L) }
+    val context = LocalContext.current
+    var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) }
     var controlsVisible by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
@@ -121,9 +133,42 @@ private fun UPlayHome(
                 isPlaying = playing
                 if (!playing) controlsVisible = true
             }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                playbackPosition = player?.currentPosition ?: 0L
+                playbackDuration = (player?.duration ?: 0L).coerceAtLeast(0L)
+            }
         }
         player?.addListener(listener)
         onDispose { player?.removeListener(listener) }
+    }
+
+    LaunchedEffect(player, selected, isPlaying) {
+        while (selected && player != null) {
+            playbackPosition = player.currentPosition.coerceAtLeast(0L)
+            playbackDuration = player.duration.takeIf { it > 0L } ?: 0L
+            delay(500)
+        }
+    }
+
+    DisposableEffect(fullScreen) {
+        val activity = context.findActivity()
+        val decor = activity?.window?.decorView
+        if (fullScreen && decor != null) {
+            originalSystemUiFlags = decor.systemUiVisibility
+            decor.systemUiVisibility = (originalSystemUiFlags
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
+        } else if (decor != null) {
+            decor.systemUiVisibility = originalSystemUiFlags
+        }
+        onDispose {
+            if (fullScreen && decor != null) decor.systemUiVisibility = originalSystemUiFlags
+        }
     }
 
     LaunchedEffect(controlsVisible, isPlaying, locked) {
@@ -212,7 +257,7 @@ private fun UPlayHome(
                                 .background(Color.Black, RoundedCornerShape(20.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (selected && player != null) {
+                            if (selected && player != null && !fullScreen) {
                                 AndroidView(
                                     factory = { context ->
                                         PlayerView(context).apply {
@@ -317,8 +362,8 @@ private fun UPlayHome(
                                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                     Text(formatTime(position), color = Color.White, fontSize = 11.sp)
                                                     Text(formatTime(duration), color = Color.White, fontSize = 11.sp)
-                                                    IconButton(onClick = { settingsOpen = true }, modifier = Modifier.size(30.dp)) {
-                                                        Icon(Icons.Default.Fullscreen, "Display options", tint = Color.White)
+                                                    IconButton(onClick = { fullScreen = true; controlsVisible = true }, modifier = Modifier.size(30.dp)) {
+                                                        Icon(Icons.Default.Fullscreen, "Enter full screen", tint = Color.White)
                                                     }
                                                 }
                                             }
@@ -415,6 +460,125 @@ private fun UPlayHome(
         }
     }
 
+    if (fullScreen && player != null) {
+        Dialog(
+            onDismissRequest = { fullScreen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                AndroidView(
+                    factory = { viewContext ->
+                        PlayerView(viewContext).apply {
+                            this.player = player
+                            useController = false
+                            resizeMode = resizeMode
+                            keepScreenOn = true
+                            setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        }
+                    },
+                    update = {
+                        it.player = player
+                        it.resizeMode = resizeMode
+                        it.keepScreenOn = true
+                    },
+                    modifier = Modifier.fillMaxSize()
+                        .pointerInput(locked) {
+                            detectTapGestures(
+                                onTap = { if (!locked) controlsVisible = !controlsVisible },
+                                onDoubleTap = { point ->
+                                    if (!locked) {
+                                        val delta = if (point.x < size.width / 2f) -10_000L else 10_000L
+                                        player.seekTo((player.currentPosition + delta).coerceAtLeast(0L))
+                                        controlsVisible = true
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(locked) {
+                            detectTransformGestures { _, _, zoom, _ ->
+                                if (!locked) {
+                                    if (zoom > 1.08f) resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                    else if (zoom < 0.92f) resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                    controlsVisible = true
+                                }
+                            }
+                        }
+                )
+
+                if (locked) {
+                    IconButton(
+                        onClick = { locked = false; controlsVisible = true },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(18.dp)
+                            .background(Color(0xCC101722), RoundedCornerShape(50))
+                    ) { Icon(Icons.Default.LockOpen, "Unlock player controls", tint = Green) }
+                } else if (controlsVisible) {
+                    Box(Modifier.fillMaxSize().background(Color(0x55000000))) {
+                        Row(
+                            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            IconButton(onClick = { settingsOpen = true }) {
+                                Icon(Icons.Default.Settings, "Playback settings", tint = Color.White)
+                            }
+                            IconButton(onClick = { locked = true; controlsVisible = false }) {
+                                Icon(Icons.Default.Lock, "Lock controls", tint = Color.White)
+                            }
+                            IconButton(onClick = { fullScreen = false; controlsVisible = true }) {
+                                Icon(Icons.Default.Fullscreen, "Exit full screen", tint = Color.White)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.align(Alignment.Center),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                        ) {
+                            IconButton(onClick = {
+                                player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                controlsVisible = true
+                            }) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(42.dp)) }
+                            IconButton(onClick = {
+                                if (player.isPlaying) player.pause() else player.play()
+                                controlsVisible = true
+                            }) {
+                                Icon(
+                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    if (isPlaying) "Pause" else "Play",
+                                    tint = Green, modifier = Modifier.size(58.dp)
+                                )
+                            }
+                            IconButton(onClick = {
+                                player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L))
+                                controlsVisible = true
+                            }) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(42.dp)) }
+                        }
+                        Column(
+                            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                                .padding(start = 24.dp, end = 24.dp, bottom = 18.dp)
+                        ) {
+                            Slider(
+                                value = if (playbackDuration > 0L) (playbackPosition.toFloat() / playbackDuration).coerceIn(0f, 1f) else 0f,
+                                onValueChange = { fraction ->
+                                    if (playbackDuration > 0L) {
+                                        playbackPosition = (playbackDuration * fraction).toLong()
+                                        player.seekTo(playbackPosition)
+                                    }
+                                },
+                                colors = SliderDefaults.colors(thumbColor = Green, activeTrackColor = Green)
+                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(formatTime(playbackPosition), color = Color.White, fontSize = 12.sp)
+                                Text(formatTime(playbackDuration), color = Color.White, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (settingsOpen) {
         AlertDialog(
             onDismissRequest = { settingsOpen = false },
@@ -500,3 +664,9 @@ private fun formatTime(milliseconds: Long): String {
     return "%02d:%02d".format(seconds / 60, seconds % 60)
 }
 
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
