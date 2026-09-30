@@ -19,6 +19,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -63,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -142,7 +145,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        player?.pause()
+        // Keep active playback alive while Android applies a configuration change such as rotation.
+        if (!isChangingConfigurations) player?.pause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putLong("uplay_position_ms", player?.currentPosition?.coerceAtLeast(0L) ?: 0L)
+        outState.putBoolean("uplay_was_playing", player?.playWhenReady == true)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
@@ -183,6 +193,7 @@ private fun UPlayHome(
     val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
     var locked by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var radialOpen by remember { mutableStateOf(false) }
     var trackDialog by remember { mutableStateOf(0) } // 1 = audio, 2 = subtitles
     var isPlaying by remember { mutableStateOf(false) }
     var playbackError by remember { mutableStateOf<String?>(null) }
@@ -246,10 +257,11 @@ private fun UPlayHome(
         }
     }
 
-    DisposableEffect(fullScreen) {
+    val immersivePlayer = fullScreen || (landscape && selected)
+    DisposableEffect(immersivePlayer) {
         val activity = context.findActivity()
         val decor = activity?.window?.decorView
-        if (fullScreen && decor != null) {
+        if (immersivePlayer && decor != null) {
             originalSystemUiFlags = decor.systemUiVisibility
             decor.systemUiVisibility = (originalSystemUiFlags
                 or View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -262,7 +274,7 @@ private fun UPlayHome(
             decor.systemUiVisibility = originalSystemUiFlags
         }
         onDispose {
-            if (fullScreen && decor != null) decor.systemUiVisibility = originalSystemUiFlags
+            if (immersivePlayer && decor != null) decor.systemUiVisibility = originalSystemUiFlags
         }
     }
 
@@ -341,8 +353,8 @@ private fun UPlayHome(
     val systemDark = isSystemInDarkTheme()
     val appBackground = if (systemDark) Ink else Color(0xFFF7F9FD)
     Surface(modifier = Modifier.fillMaxSize(), color = appBackground) {
-        Scaffold(containerColor = appBackground, contentWindowInsets = if (fullScreen) WindowInsets(0,0,0,0) else WindowInsets.safeDrawing, bottomBar = {
-            if (!fullScreen) NavigationBar(containerColor = if (systemDark) Color(0xFF0B101B) else Color.White, tonalElevation = 0.dp) {
+        Scaffold(containerColor = appBackground, contentWindowInsets = if (immersivePlayer) WindowInsets(0,0,0,0) else WindowInsets.safeDrawing, bottomBar = {
+            if (!fullScreen && !(landscape && selected)) NavigationBar(containerColor = if (systemDark) Color(0xFF0B101B) else Color.White, tonalElevation = 0.dp) {
                 NavigationBarItem(currentTab == 0, { currentTab = 0 }, { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
                 NavigationBarItem(currentTab == 1, { currentTab = 1 }, { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Player") })
                 NavigationBarItem(currentTab == 2, { currentTab = 2 }, { Icon(Icons.Default.VideoLibrary, null) }, label = { Text("Library") })
@@ -433,14 +445,20 @@ private fun UPlayHome(
                                         ) { Icon(Icons.Default.LockOpen, "Unlock controls", tint = Green) }
                                     } else {
                                         Row(
-                                            modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            IconButton(onClick = { settingsOpen = true }) {
-                                                Icon(Icons.Default.Settings, "Player settings", tint = Color.White)
+                                            Surface(onClick = { settingsOpen = true }, shape = CircleShape,
+                                                color = Color(0x77070B12), modifier = Modifier.size(42.dp)) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(Icons.Default.Settings, "Player settings", tint = Color.White, modifier = Modifier.size(21.dp))
+                                                }
                                             }
-                                            IconButton(onClick = { locked = true; controlsVisible = true }) {
-                                                Icon(Icons.Default.Lock, "Lock controls", tint = Color.White)
+                                            Surface(onClick = { locked = true; radialOpen = false; controlsVisible = true },
+                                                shape = CircleShape, color = Color(0x77070B12), modifier = Modifier.size(42.dp)) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(Icons.Default.Lock, "Lock controls", tint = Color.White, modifier = Modifier.size(21.dp))
+                                                }
                                             }
                                         }
                                         Row(
@@ -463,6 +481,45 @@ private fun UPlayHome(
                                                 onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L)); controlsVisible = true },
                                                 modifier = Modifier.size(48.dp).background(Color(0x66070B12), CircleShape)
                                             ) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp)) }
+                                        }
+                                        Box(
+                                            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 70.dp)
+                                        ) {
+                                            AnimatedVisibility(
+                                                visible = radialOpen,
+                                                enter = scaleIn(initialScale = 0.45f) + fadeIn(),
+                                                exit = scaleOut(targetScale = 0.45f) + fadeOut()
+                                            ) {
+                                                Column(
+                                                    verticalArrangement = Arrangement.spacedBy(9.dp),
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                    modifier = Modifier.padding(bottom = 48.dp).graphicsLayer {
+                                                        rotationZ = if (radialOpen) 0f else -28f
+                                                    }
+                                                ) {
+                                                    RadialControl(Icons.Default.Subtitles, "Subtitles") {
+                                                        radialOpen = false; trackDialog = 2
+                                                    }
+                                                    RadialControl(Icons.Default.GraphicEq, "Audio") {
+                                                        radialOpen = false; trackDialog = 1
+                                                    }
+                                                    RadialControl(Icons.Default.FitScreen, "Screen fit") {
+                                                        radialOpen = false; settingsOpen = true
+                                                    }
+                                                }
+                                            }
+                                            Surface(
+                                                onClick = { radialOpen = !radialOpen }, shape = CircleShape,
+                                                color = if (radialOpen) Color(0xFF8DD8FF) else Color(0xDD101827),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xAA8DD8FF)),
+                                                modifier = Modifier.size(46.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(if (radialOpen) Icons.Default.Settings else Icons.Default.FitScreen,
+                                                        if (radialOpen) "Close quick controls" else "Quick controls",
+                                                        tint = if (radialOpen) Ink else Color.White, modifier = Modifier.size(22.dp))
+                                                }
+                                            }
                                         }
                                         Column(
                                             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -922,6 +979,23 @@ private fun UPlayHome(
     }
 }
 
+
+@Composable
+private fun RadialControl(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick, shape = CircleShape, color = Color(0xEE111A29),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x668DD8FF)),
+        modifier = Modifier.size(44.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = label, tint = Color(0xFF8DD8FF), modifier = Modifier.size(21.dp))
+        }
+    }
+}
 
 private fun extractSharedUrl(intent: Intent?): String? {
     if (intent == null || intent.action != Intent.ACTION_SEND) return null
