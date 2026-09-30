@@ -63,6 +63,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
@@ -139,6 +140,7 @@ private fun UPlayHome(
     var settingsOpen by remember { mutableStateOf(false) }
     var trackDialog by remember { mutableStateOf(0) } // 1 = audio, 2 = subtitles
     var isPlaying by remember { mutableStateOf(false) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
@@ -153,6 +155,16 @@ private fun UPlayHome(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 playbackPosition = player?.currentPosition ?: 0L
                 playbackDuration = (player?.duration ?: 0L).coerceAtLeast(0L)
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                playbackError = playbackErrorMessage(error)
+                controlsVisible = true
+                message = playbackError ?: "Playback failed."
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                playbackError = null
             }
         }
         player?.addListener(listener)
@@ -484,7 +496,11 @@ private fun UPlayHome(
                         OutlinedButton(
                             onClick = {
                                 val candidate = url.trim()
-                                if (candidate.startsWith("https://", ignoreCase = true) || candidate.startsWith("http://", ignoreCase = true)) {
+                                val parsed = runCatching { Uri.parse(candidate) }.getOrNull()
+                                val validDirectUrl = parsed != null &&
+                                    (parsed.scheme.equals("https", ignoreCase = true) || parsed.scheme.equals("http", ignoreCase = true)) &&
+                                    !parsed.host.isNullOrBlank()
+                                if (validDirectUrl) {
                                     onPlayUrl(candidate)
                                     selected = true
                                     controlsVisible = true
@@ -494,7 +510,7 @@ private fun UPlayHome(
                                     while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
                                     saveRecentVideos(context, recentVideos)
                                     message = "Loading video link…"
-                                } else message = "Please enter a direct video URL."
+                                } else message = "Please enter a valid direct HTTP(S) video URL."
                             },
                             modifier = Modifier.fillMaxWidth().height(50.dp),
                             shape = RoundedCornerShape(15.dp),
@@ -505,7 +521,34 @@ private fun UPlayHome(
                             Text("Play link", fontWeight = FontWeight.Bold)
                         }
                     }
-                    item { Text(message, color = Muted, fontSize = 12.sp) }
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(message, color = if (playbackError != null) Color(0xFFFFB4AB) else Muted, fontSize = 12.sp)
+                            if (playbackError != null) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Button(onClick = {
+                                        playbackError = null
+                                        runCatching {
+                                            player?.let { active ->
+                                                active.seekToDefaultPosition()
+                                                active.prepare()
+                                                active.playWhenReady = true
+                                            }
+                                        }.onFailure {
+                                            playbackError = "Retry couldn't start. Try reopening the video."
+                                            message = playbackError ?: message
+                                        }
+                                    }) { Text("Retry playback") }
+                                    TextButton(onClick = {
+                                        playbackError = null
+                                        selected = false
+                                        player?.stop()
+                                        message = "Playback stopped. Choose another video or URL."
+                                    }) { Text("Dismiss", color = Muted) }
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 LazyColumn(
@@ -840,6 +883,19 @@ private fun UPlayHome(
             confirmButton = { TextButton(onClick = { trackDialog = 0 }) { Text("Close", color = Green) } }
         )
     }
+}
+
+
+private fun playbackErrorMessage(error: PlaybackException): String = when {
+    error.errorCodeName.contains("NETWORK", ignoreCase = true) ||
+        error.errorCodeName.contains("IO_", ignoreCase = true) ->
+        "Couldn't load this video. Check your connection and the video URL."
+    error.errorCodeName.contains("UNSUPPORTED", ignoreCase = true) ||
+        error.errorCodeName.contains("DECODING", ignoreCase = true) ->
+        "This video format or codec may not be supported by the current player."
+    error.errorCodeName.contains("PARSING", ignoreCase = true) ->
+        "The video stream couldn't be read. Try another file or a direct media URL."
+    else -> "Playback failed. Check the file or URL, then retry."
 }
 
 private fun formatTime(milliseconds: Long): String {
