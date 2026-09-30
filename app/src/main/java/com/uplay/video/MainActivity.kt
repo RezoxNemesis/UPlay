@@ -335,9 +335,10 @@ private fun UPlayHome(
             if (currentTab == 1) {
                 Column(
                     modifier = Modifier.fillMaxSize()
-                        .padding(insets)
-                        .padding(horizontal = if (landscape) 6.dp else 14.dp, vertical = if (landscape) 4.dp else 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (landscape) 5.dp else 10.dp)
+                        .padding(if (fullScreen) PaddingValues(0.dp) else insets)
+                        .padding(horizontal = if (fullScreen || landscape) 0.dp else 14.dp,
+                            vertical = if (fullScreen || landscape) 0.dp else 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (fullScreen || landscape) 0.dp else 10.dp)
                 ) {
                     if (!landscape && !fullScreen) {
                         Row(
@@ -404,6 +405,7 @@ private fun UPlayHome(
                                         }
                                     }
                             )
+                            Column(Modifier.fillMaxSize()) {
                             AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
                                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xB8000000), Color.Transparent, Color(0xD9000000))))) {
                                     if (locked) {
@@ -429,24 +431,21 @@ private fun UPlayHome(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(20.dp)
                                         ) {
-                                            IconButton(onClick = {
-                                                player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
-                                                controlsVisible = true
-                                            }) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(34.dp)) }
-                                            IconButton(onClick = {
-                                                if (player.isPlaying) player.pause() else player.play()
-                                                controlsVisible = true
-                                            }) {
-                                                Icon(
-                                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                    if (isPlaying) "Pause" else "Play",
-                                                    tint = Green, modifier = Modifier.size(50.dp)
-                                                )
+                                            IconButton(
+                                                onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)); controlsVisible = true },
+                                                modifier = Modifier.size(48.dp).background(Color(0x66070B12), CircleShape)
+                                            ) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp)) }
+                                            IconButton(
+                                                onClick = { if (player.isPlaying) player.pause() else player.play(); controlsVisible = true },
+                                                modifier = Modifier.size(66.dp).background(Green, CircleShape)
+                                            ) {
+                                                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                    if (isPlaying) "Pause" else "Play", tint = Ink, modifier = Modifier.size(42.dp))
                                             }
-                                            IconButton(onClick = {
-                                                player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L))
-                                                controlsVisible = true
-                                            }) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                                            IconButton(
+                                                onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L)); controlsVisible = true },
+                                                modifier = Modifier.size(48.dp).background(Color(0x66070B12), CircleShape)
+                                            ) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp)) }
                                         }
                                         Column(
                                             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -484,6 +483,7 @@ private fun UPlayHome(
                                         }
                                     }
                                 }
+                            }
                             }
                         } else {
                             Column(
