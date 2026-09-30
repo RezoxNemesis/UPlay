@@ -50,6 +50,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.delay
 
 private val Ink = Color(0xFF090D15)
@@ -111,7 +112,7 @@ private fun UPlayHome(
     var settingsOpen by remember { mutableStateOf(false) }
     var trackDialog by remember { mutableStateOf(0) } // 1 = audio, 2 = subtitles
     var isPlaying by remember { mutableStateOf(false) }
-    var resizeMode by remember { mutableIntStateOf(PlayerView.RESIZE_MODE_FIT) }
+    var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
     DisposableEffect(player) {
@@ -248,10 +249,10 @@ private fun UPlayHome(
                                             detectTransformGestures { _, _, zoom, _ ->
                                                 if (!locked) {
                                                     if (zoom > 1.08f) {
-                                                        resizeMode = PlayerView.RESIZE_MODE_ZOOM
+                                                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                                                         playerView?.resizeMode = resizeMode
                                                     } else if (zoom < 0.92f) {
-                                                        resizeMode = PlayerView.RESIZE_MODE_FIT
+                                                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                                                         playerView?.resizeMode = resizeMode
                                                     }
                                                     controlsVisible = true
@@ -423,14 +424,14 @@ private fun UPlayHome(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Resize video", color = Muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(selected = resizeMode == PlayerView.RESIZE_MODE_FIT, onClick = {
-                            resizeMode = PlayerView.RESIZE_MODE_FIT; playerView?.resizeMode = resizeMode
+                        FilterChip(selected = resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT, onClick = {
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT; playerView?.resizeMode = resizeMode
                         }, label = { Text("Fit") })
-                        FilterChip(selected = resizeMode == PlayerView.RESIZE_MODE_FILL, onClick = {
-                            resizeMode = PlayerView.RESIZE_MODE_FILL; playerView?.resizeMode = resizeMode
+                        FilterChip(selected = resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL, onClick = {
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL; playerView?.resizeMode = resizeMode
                         }, label = { Text("Fill") })
-                        FilterChip(selected = resizeMode == PlayerView.RESIZE_MODE_ZOOM, onClick = {
-                            resizeMode = PlayerView.RESIZE_MODE_ZOOM; playerView?.resizeMode = resizeMode
+                        FilterChip(selected = resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM, onClick = {
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; playerView?.resizeMode = resizeMode
                         }, label = { Text("Zoom") })
                     }
                     OutlinedButton(onClick = { settingsOpen = false; trackDialog = 1 }, modifier = Modifier.fillMaxWidth()) {
