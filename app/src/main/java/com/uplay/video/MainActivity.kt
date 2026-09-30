@@ -181,6 +181,8 @@ private fun UPlayHome(
     var playbackDuration by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val configuration = LocalConfiguration.current
+    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) } // Home, Player, Library
     var controlsVisible by remember { mutableStateOf(true) }
@@ -375,9 +377,6 @@ private fun UPlayHome(
         }
     }
 
-    val configuration = LocalConfiguration.current
-    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
     val systemDark = isSystemInDarkTheme()
     val appBackground = if (systemDark) Ink else Color(0xFFF7F9FD)
     Surface(modifier = Modifier.fillMaxSize(), color = appBackground) {
@@ -539,7 +538,7 @@ private fun UPlayHome(
                                         Box(
                                             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 70.dp)
                                         ) {
-                                            AnimatedVisibility(
+                                            androidx.compose.animation.AnimatedVisibility(
                                                 visible = radialOpen,
                                                 enter = scaleIn(initialScale = 0.45f) + fadeIn(),
                                                 exit = scaleOut(targetScale = 0.45f) + fadeOut()
