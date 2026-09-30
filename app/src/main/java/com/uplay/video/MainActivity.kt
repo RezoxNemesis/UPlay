@@ -85,7 +85,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Stroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.unit.IntOffset
@@ -245,7 +244,7 @@ private fun UPlayHome(
     var rollRotation by remember { mutableFloatStateOf(0f) }
     val animatedRollRotation by animateFloatAsState(
         targetValue = rollRotation,
-        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 1050, easing = LinearEasing),
         label = "navigation-film-roll-rotation"
     )
     var controlsVisible by remember { mutableStateOf(true) }
