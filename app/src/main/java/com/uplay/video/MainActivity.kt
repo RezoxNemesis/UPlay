@@ -83,9 +83,11 @@ private data class RecentVideo(val uri: String, val title: String, val positionM
 
 class MainActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
+    private val incomingSharedUrl = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        incomingSharedUrl.value = extractSharedUrl(intent)
         val preferences = getSharedPreferences("uplay_settings", Context.MODE_PRIVATE)
         player = ExoPlayer.Builder(this).build().apply {
             setPlaybackSpeed(preferences.getFloat("playback_speed", 1f).coerceIn(0.5f, 2f))
@@ -98,11 +100,19 @@ class MainActivity : ComponentActivity() {
             )) {
                 UPlayHome(
                     player = player,
+                    incomingSharedUrl = incomingSharedUrl.value,
+                    onSharedUrlConsumed = { incomingSharedUrl.value = null },
                     onLocalVideo = { uri -> play(MediaItem.fromUri(uri)) },
                     onPlayUrl = { url -> play(MediaItem.fromUri(url)) }
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incomingSharedUrl.value = extractSharedUrl(intent)
     }
 
     private fun play(item: MediaItem) {
@@ -126,6 +136,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun UPlayHome(
     player: ExoPlayer?,
+    incomingSharedUrl: String?,
+    onSharedUrlConsumed: () -> Unit,
     onLocalVideo: (Uri) -> Unit,
     onPlayUrl: (String) -> Unit
 ) {
@@ -136,6 +148,14 @@ private fun UPlayHome(
     var playbackPosition by remember { mutableLongStateOf(0L) }
     var playbackDuration by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current
+    LaunchedEffect(incomingSharedUrl) {
+        val sharedUrl = incomingSharedUrl ?: return@LaunchedEffect
+        url = sharedUrl
+        currentTab = 0
+        controlsVisible = true
+        message = sharedLinkMessage(sharedUrl)
+        onSharedUrlConsumed()
+    }
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) }
     val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
@@ -912,6 +932,33 @@ private fun UPlayHome(
     }
 }
 
+
+private fun extractSharedUrl(intent: Intent?): String? {
+    if (intent == null || intent.action != Intent.ACTION_SEND) return null
+    val sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+    val candidate = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
+        .find(sharedText)?.value
+        ?.trimEnd('.', ',', '!', '?', ')', ']', '}')
+        ?: return null
+    return runCatching {
+        val uri = Uri.parse(candidate)
+        candidate.takeIf {
+            (uri.scheme.equals("https", ignoreCase = true) || uri.scheme.equals("http", ignoreCase = true)) &&
+                !uri.host.isNullOrBlank()
+        }
+    }.getOrNull()
+}
+
+private fun sharedLinkMessage(url: String): String {
+    val host = runCatching { Uri.parse(url).host.orEmpty().lowercase() }.getOrDefault("")
+    return when {
+        host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be" ->
+            "YouTube link received. It's ready in the link field; playback or downloading depends on supported access."
+        host == "instagram.com" || host.endsWith(".instagram.com") ->
+            "Instagram link received. UPlay will need a supported, permitted media source to download it."
+        else -> "Shared link received. Review it in the link field; available actions depend on the source."
+    }
+}
 
 private fun playbackErrorMessage(error: PlaybackException): String = when {
     error.errorCodeName.contains("NETWORK", ignoreCase = true) ||
