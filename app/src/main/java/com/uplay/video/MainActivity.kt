@@ -604,21 +604,12 @@ private fun UPlayHome(
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                                        Box(
-                                            modifier = Modifier.size(148.dp).clip(RoundedCornerShape(42.dp))
-                                                .background(Brush.linearGradient(listOf(Color(0xFF152E4B), Color(0xFF0D1727)))),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF8DD8FF), modifier = Modifier.size(72.dp))
-                                        }
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                                        MusicOrbitVisualizer(isPlaying = isPlaying, modifier = Modifier.size(220.dp))
                                         Text(player.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty().ifBlank { "Now playing" },
                                             color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Bottom,
-                                            modifier = Modifier.height(54.dp)) {
-                                            repeat(19) { index -> AudioBar(index = index) }
-                                        }
-                                        Text("MUSIC PLAYER", color = Color(0xFF8DD8FF), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.5.sp)
+                                        Text(if (isPlaying) "SOUND IN MOTION" else "READY WHEN YOU ARE",
+                                            color = Color(0xFF8DD8FF), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.5.sp)
                                     }
                                 }
                             } else AndroidView(
@@ -673,21 +664,15 @@ private fun UPlayHome(
                                                 .background(Color(0x990B101B), RoundedCornerShape(50))
                                         ) { Icon(Icons.Default.LockOpen, "Unlock controls", tint = Green) }
                                     } else {
-                                        Row(
-                                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        Surface(
+                                            onClick = { locked = true; radialOpen = false; controlsVisible = true },
+                                            shape = CircleShape,
+                                            color = Color(0x77070B12),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x448DD8FF)),
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(42.dp)
                                         ) {
-                                            Surface(onClick = { settingsOpen = true }, shape = CircleShape,
-                                                color = Color(0x77070B12), modifier = Modifier.size(42.dp)) {
-                                                Box(contentAlignment = Alignment.Center) {
-                                                    Icon(Icons.Default.Settings, "Player settings", tint = Color.White, modifier = Modifier.size(21.dp))
-                                                }
-                                            }
-                                            Surface(onClick = { locked = true; radialOpen = false; controlsVisible = true },
-                                                shape = CircleShape, color = Color(0x77070B12), modifier = Modifier.size(42.dp)) {
-                                                Box(contentAlignment = Alignment.Center) {
-                                                    Icon(Icons.Default.Lock, "Lock controls", tint = Color.White, modifier = Modifier.size(21.dp))
-                                                }
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.Lock, "Lock controls", tint = Color.White, modifier = Modifier.size(21.dp))
                                             }
                                         }
                                         Row(
@@ -712,39 +697,73 @@ private fun UPlayHome(
                                             ) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp)) }
                                         }
                                         Box(
-                                            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 70.dp)
+                                            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 66.dp)
+                                                .size(204.dp)
                                         ) {
                                             androidx.compose.animation.AnimatedVisibility(
                                                 visible = radialOpen,
-                                                enter = scaleIn(initialScale = 0.45f) + fadeIn(),
-                                                exit = scaleOut(targetScale = 0.45f) + fadeOut()
+                                                modifier = Modifier.align(Alignment.BottomEnd).offset(x = (-2).dp, y = (-46).dp),
+                                                enter = scaleIn(initialScale = 0.35f) + fadeIn(),
+                                                exit = scaleOut(targetScale = 0.35f) + fadeOut()
                                             ) {
                                                 val radialRotation by animateFloatAsState(
                                                     targetValue = if (radialOpen) 360f else 0f,
-                                                    animationSpec = tween(520, easing = FastOutSlowInEasing),
+                                                    animationSpec = tween(650, easing = FastOutSlowInEasing),
                                                     label = "radial-controls-rotation"
                                                 )
-                                                Box(
-                                                    Modifier.size(148.dp).padding(bottom = 42.dp)
-                                                        .graphicsLayer { rotationZ = radialRotation }
-                                                ) {
+                                                Box(Modifier.size(184.dp).graphicsLayer { rotationZ = radialRotation }) {
+                                                    RadialControl(
+                                                        Icons.Default.Forward10, "Playback speed: tap to cycle",
+                                                        modifier = Modifier.align(Alignment.TopCenter).offset(y = 2.dp)
+                                                    ) {
+                                                        val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+                                                        val index = speeds.indexOfFirst { it == playbackSpeed }.coerceAtLeast(0)
+                                                        playbackSpeed = speeds[(index + 1) % speeds.size]
+                                                        player?.setPlaybackSpeed(playbackSpeed)
+                                                        playerPreferences.edit().putFloat("playback_speed", playbackSpeed).apply()
+                                                        message = "Playback speed: ${playbackSpeed}×"
+                                                        radialOpen = false
+                                                    }
+                                                    RadialControl(
+                                                        Icons.Default.FitScreen, "Screen framing",
+                                                        modifier = Modifier.align(Alignment.TopEnd).offset(x = (-4).dp, y = 24.dp)
+                                                    ) {
+                                                        val modes = listOf(
+                                                            AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                                                            AspectRatioFrameLayout.RESIZE_MODE_FILL,
+                                                            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                                        )
+                                                        val index = modes.indexOf(resizeMode).coerceAtLeast(0)
+                                                        resizeMode = modes[(index + 1) % modes.size]
+                                                        playerView?.resizeMode = resizeMode
+                                                        playerPreferences.edit().putInt("resize_mode", resizeMode).apply()
+                                                        message = "Screen framing: ${when (resizeMode) { AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"; AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Crop"; else -> "Fit" }}"
+                                                        radialOpen = false
+                                                    }
                                                     RadialControl(
                                                         Icons.Default.Subtitles, "Subtitles",
-                                                        modifier = Modifier.align(Alignment.TopCenter).offset(y = 4.dp)
+                                                        modifier = Modifier.align(Alignment.BottomEnd).offset(x = (-4).dp, y = (-24).dp)
+                                                    ) { radialOpen = false; trackDialog = 2 }
+                                                    RadialControl(
+                                                        Icons.Default.FolderOpen, "Load subtitle file",
+                                                        modifier = Modifier.align(Alignment.BottomCenter).offset(y = (-2).dp)
                                                     ) {
-                                                        radialOpen = false; trackDialog = 2
+                                                        radialOpen = false
+                                                        subtitlePicker.launch(arrayOf("text/*", "application/x-subrip", "application/ttml+xml"))
                                                     }
                                                     RadialControl(
-                                                        Icons.Default.GraphicEq, "Audio",
-                                                        modifier = Modifier.align(Alignment.CenterStart).offset(x = 8.dp, y = 4.dp)
-                                                    ) {
-                                                        radialOpen = false; trackDialog = 1
-                                                    }
+                                                        Icons.Default.GraphicEq, "Audio track",
+                                                        modifier = Modifier.align(Alignment.BottomStart).offset(x = 4.dp, y = (-24).dp)
+                                                    ) { radialOpen = false; trackDialog = 1 }
                                                     RadialControl(
-                                                        Icons.Default.FitScreen, "Screen fit",
-                                                        modifier = Modifier.align(Alignment.TopEnd).offset(x = (-5).dp, y = 24.dp)
+                                                        Icons.Default.Replay10, "Toggle repeat",
+                                                        modifier = Modifier.align(Alignment.TopStart).offset(x = 4.dp, y = 24.dp)
                                                     ) {
-                                                        radialOpen = false; settingsOpen = true
+                                                        val repeat = player?.repeatMode != Player.REPEAT_MODE_ONE
+                                                        player?.repeatMode = if (repeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                                                        playerPreferences.edit().putBoolean("repeat_video", repeat).apply()
+                                                        message = if (repeat) "Repeat enabled" else "Repeat disabled"
+                                                        radialOpen = false
                                                     }
                                                 }
                                             }
@@ -752,11 +771,11 @@ private fun UPlayHome(
                                                 onClick = { radialOpen = !radialOpen }, shape = CircleShape,
                                                 color = if (radialOpen) Color(0xFF8DD8FF) else Color(0xDD101827),
                                                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xAA8DD8FF)),
-                                                modifier = Modifier.size(46.dp)
+                                                modifier = Modifier.align(Alignment.BottomEnd).size(46.dp)
                                             ) {
                                                 Box(contentAlignment = Alignment.Center) {
-                                                    Icon(if (radialOpen) Icons.Default.Settings else Icons.Default.FitScreen,
-                                                        if (radialOpen) "Close quick controls" else "Quick controls",
+                                                    Icon(if (radialOpen) Icons.Default.LockOpen else Icons.Default.FitScreen,
+                                                        if (radialOpen) "Close quick controls" else "Open circular player controls",
                                                         tint = if (radialOpen) Ink else Color.White, modifier = Modifier.size(22.dp))
                                                 }
                                             }
@@ -1044,7 +1063,7 @@ private fun UPlayHome(
                     modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Spacer(Modifier.weight(0.44f))
+                    Spacer(Modifier.weight(0.34f))
                     Box(Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.align(Alignment.Center),
@@ -1494,21 +1513,52 @@ private fun SettingsActionRow(
 }
 
 @Composable
-private fun AudioBar(index: Int) {
-    val transition = rememberInfiniteTransition(label = "audio-bar-$index")
-    val height by transition.animateFloat(
-        initialValue = 9f + (index % 4) * 4f,
-        targetValue = 18f + ((index * 7) % 7) * 5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 380 + (index % 5) * 90, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "audio-height-$index"
+private fun MusicOrbitVisualizer(isPlaying: Boolean, modifier: Modifier = Modifier) {
+    val motion = rememberInfiniteTransition(label = "uplay-music-orbit")
+    val rotation by motion.animateFloat(
+        initialValue = 0f, targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(14000, easing = LinearEasing), RepeatMode.Restart),
+        label = "music-orbit-rotation"
     )
-    Box(
-        modifier = Modifier.width(4.dp).height(height.dp).clip(RoundedCornerShape(4.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFFB5E9FF), Color(0xFF3BAEFF))))
+    val pulse by motion.animateFloat(
+        initialValue = 0.86f, targetValue = if (isPlaying) 1.12f else 0.94f,
+        animationSpec = infiniteRepeatable(tween(if (isPlaying) 900 else 1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "music-orbit-pulse"
     )
+    Canvas(modifier = modifier) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val base = size.minDimension * 0.22f
+        drawCircle(Color(0xFF142941).copy(alpha = 0.8f), base * 1.8f * pulse, center)
+        drawCircle(Color(0xFF61C9FF).copy(alpha = 0.18f), base * 2.0f * pulse, center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx()))
+        drawCircle(Color(0xFF8DD8FF).copy(alpha = 0.30f), base * 1.58f, center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+        drawCircle(Color(0xFF4BAEFF).copy(alpha = 0.38f), base * 1.22f, center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+        for (i in 0 until 72) {
+            val angle = Math.toRadians((i * 5.0) + rotation)
+            val envelope = (0.38 + 0.62 * kotlin.math.abs(kotlin.math.sin(i * 0.53 + rotation * 0.025))).toFloat()
+            val inner = base * (1.42f + envelope * 0.12f)
+            val outer = base * (1.58f + envelope * (if (isPlaying) 0.48f else 0.18f)) * pulse
+            val start = Offset(center.x + kotlin.math.cos(angle).toFloat() * inner, center.y + kotlin.math.sin(angle).toFloat() * inner)
+            val end = Offset(center.x + kotlin.math.cos(angle).toFloat() * outer, center.y + kotlin.math.sin(angle).toFloat() * outer)
+            drawLine(
+                brush = Brush.linearGradient(listOf(Color(0xFF3BAEFF).copy(alpha = 0.35f), Color(0xFFB8F0FF))),
+                start = start, end = end,
+                strokeWidth = if (i % 3 == 0) 2.6.dp.toPx() else 1.3.dp.toPx(),
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+        }
+        val orbitAngle = Math.toRadians(rotation * 1.7)
+        val orbitRadius = base * 1.08f
+        drawCircle(Color(0xFFB8F0FF), 3.8.dp.toPx(),
+            Offset(center.x + kotlin.math.cos(orbitAngle).toFloat() * orbitRadius, center.y + kotlin.math.sin(orbitAngle).toFloat() * orbitRadius))
+        drawCircle(Color(0xFF3BAEFF), 2.6.dp.toPx(),
+            Offset(center.x + kotlin.math.cos(-orbitAngle * 0.72).toFloat() * orbitRadius * 1.15f,
+                center.y + kotlin.math.sin(-orbitAngle * 0.72).toFloat() * orbitRadius * 1.15f))
+        drawCircle(Color(0xFF8DD8FF).copy(alpha = 0.95f), base * 0.35f * pulse, center)
+        drawCircle(Color(0xFF0B1727), base * 0.20f, center)
+    }
 }
 
 @Composable
