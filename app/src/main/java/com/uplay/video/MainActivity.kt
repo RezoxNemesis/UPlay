@@ -217,7 +217,7 @@ private fun UPlayHome(
                                         PlayerView(context).apply {
                                             this.player = player
                                             useController = false
-                                            resizeMode = this@UPlayHomeResizeMode(resizeMode)
+                                            this.resizeMode = resizeMode
                                             keepScreenOn = true
                                             setShutterBackgroundColor(android.graphics.Color.BLACK)
                                             playerView = this
@@ -499,4 +499,3 @@ private fun formatTime(milliseconds: Long): String {
     return "%02d:%02d".format(seconds / 60, seconds % 60)
 }
 
-private fun UPlayHomeResizeMode(mode: Int): Int = mode
