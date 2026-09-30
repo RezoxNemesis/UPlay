@@ -86,7 +86,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        player = ExoPlayer.Builder(this).build()
+        val preferences = getSharedPreferences("uplay_settings", Context.MODE_PRIVATE)
+        player = ExoPlayer.Builder(this).build().apply {
+            setPlaybackSpeed(preferences.getFloat("playback_speed", 1f).coerceIn(0.5f, 2f))
+            repeatMode = if (preferences.getBoolean("repeat_video", false)) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
                 primary = Blue, secondary = Green, background = Ink, surface = Panel,
@@ -141,8 +145,22 @@ private fun UPlayHome(
     var trackDialog by remember { mutableStateOf(0) } // 1 = audio, 2 = subtitles
     var isPlaying by remember { mutableStateOf(false) }
     var playbackError by remember { mutableStateOf<String?>(null) }
-    var playbackSpeed by remember { mutableFloatStateOf(1f) }
-    var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    val playerPreferences = remember(context) {
+        context.getSharedPreferences("uplay_settings", Context.MODE_PRIVATE)
+    }
+    var playbackSpeed by remember(context) {
+        mutableFloatStateOf(playerPreferences.getFloat("playback_speed", 1f).coerceIn(0.5f, 2f))
+    }
+    var resizeMode by remember(context) {
+        mutableIntStateOf(
+            playerPreferences.getInt("resize_mode", AspectRatioFrameLayout.RESIZE_MODE_FIT)
+                .takeIf {
+                    it == AspectRatioFrameLayout.RESIZE_MODE_FIT ||
+                        it == AspectRatioFrameLayout.RESIZE_MODE_FILL ||
+                        it == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                } ?: AspectRatioFrameLayout.RESIZE_MODE_FIT
+        )
+    }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
     DisposableEffect(player) {
@@ -530,8 +548,9 @@ private fun UPlayHome(
                                         playbackError = null
                                         runCatching {
                                             player?.let { active ->
-                                                active.seekToDefaultPosition()
+                                                val retryPosition = active.currentPosition.coerceAtLeast(0L)
                                                 active.prepare()
+                                                active.seekTo(retryPosition)
                                                 active.playWhenReady = true
                                             }
                                         }.onFailure {
@@ -787,6 +806,7 @@ private fun UPlayHome(
                                 onClick = {
                                     playbackSpeed = speed
                                     player?.setPlaybackSpeed(speed)
+                                    playerPreferences.edit().putFloat("playback_speed", speed).apply()
                                 },
                                 label = { Text("${speed}x") }
                             )
@@ -802,19 +822,26 @@ private fun UPlayHome(
                             checked = player?.repeatMode == Player.REPEAT_MODE_ONE,
                             onCheckedChange = {
                                 player?.repeatMode = if (it) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                                playerPreferences.edit().putBoolean("repeat_video", it).apply()
                             }
                         )
                     }
                     Text("Resize video", color = Muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         FilterChip(selected = resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT, onClick = {
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT; playerView?.resizeMode = resizeMode
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            playerView?.resizeMode = resizeMode
+                            playerPreferences.edit().putInt("resize_mode", resizeMode).apply()
                         }, label = { Text("Fit") })
                         FilterChip(selected = resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL, onClick = {
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL; playerView?.resizeMode = resizeMode
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+                            playerView?.resizeMode = resizeMode
+                            playerPreferences.edit().putInt("resize_mode", resizeMode).apply()
                         }, label = { Text("Fill") })
                         FilterChip(selected = resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM, onClick = {
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; playerView?.resizeMode = resizeMode
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            playerView?.resizeMode = resizeMode
+                            playerPreferences.edit().putInt("resize_mode", resizeMode).apply()
                         }, label = { Text("Zoom") })
                     }
                     OutlinedButton(onClick = { settingsOpen = false; trackDialog = 1 }, modifier = Modifier.fillMaxWidth()) {
