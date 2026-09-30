@@ -35,6 +35,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
@@ -1564,10 +1565,8 @@ private fun CinematicSeekBar(
             color = Color(0xFF253449),
             start = Offset(startX, centerY),
             end = Offset(endX, centerY),
-            style = androidx.compose.ui.graphics.drawscope.Stroke(
-                width = trackHeight,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round
-            )
+            strokeWidth = trackHeight,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
         )
         if (progressX > startX) {
             drawLine(
@@ -1578,10 +1577,8 @@ private fun CinematicSeekBar(
                 ),
                 start = Offset(startX, centerY),
                 end = Offset(progressX, centerY),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(
-                    width = trackHeight,
-                    cap = androidx.compose.ui.graphics.StrokeCap.Round
-                )
+                strokeWidth = trackHeight,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
             )
         }
         drawCircle(
