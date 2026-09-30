@@ -1564,8 +1564,10 @@ private fun CinematicSeekBar(
             color = Color(0xFF253449),
             start = Offset(startX, centerY),
             end = Offset(endX, centerY),
-            strokeWidth = trackHeight,
-            cap = androidx.compose.ui.graphics.StrokeCap.Round
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = trackHeight,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
         )
         if (progressX > startX) {
             drawLine(
@@ -1576,8 +1578,10 @@ private fun CinematicSeekBar(
                 ),
                 start = Offset(startX, centerY),
                 end = Offset(progressX, centerY),
-                strokeWidth = trackHeight,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    width = trackHeight,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                )
             )
         }
         drawCircle(
