@@ -86,6 +86,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.shape.CircleShape
@@ -241,9 +242,11 @@ private fun UPlayHome(
     var currentTab by remember { mutableStateOf(0) } // Home, Player, Library
     var libraryMode by remember { mutableIntStateOf(0) } // Videos, Music
     var rollRotation by remember { mutableFloatStateOf(0f) }
+    var filmRollVisible by remember { mutableStateOf(false) }
+    val rollLift = remember { Animatable(0f) }
     val animatedRollRotation by animateFloatAsState(
         targetValue = rollRotation,
-        animationSpec = tween(durationMillis = 1050, easing = LinearEasing),
+        animationSpec = tween(durationMillis = 850, easing = FastOutSlowInEasing),
         label = "navigation-film-roll-rotation"
     )
     var controlsVisible by remember { mutableStateOf(true) }
@@ -514,30 +517,44 @@ private fun UPlayHome(
                     val markerX = remember(maxWidth, density) {
                         Animatable(with(density) { (maxWidth / 6f - 10.dp).toPx() })
                     }
-                    LaunchedEffect(currentTab, maxWidth) {
-                        val target = with(density) { (maxWidth * ((currentTab + 0.5f) / 3f) - 10.dp).toPx() }
-                        markerX.animateTo(target, animationSpec = tween(durationMillis = 1050, easing = LinearEasing))
+                    fun selectTab(tab: Int) {
+                        if (tab == currentTab) return
+                        val target = with(density) { (maxWidth * ((tab + 0.5f) / 3f) - 10.dp).toPx() }
+                        currentTab = tab
+                        rollRotation += 720f
+                        filmRollVisible = true
+                        uiScope.launch {
+                            rollLift.snapTo(0f)
+                            rollLift.animateTo(-with(density) { 13.dp.toPx() }, tween(140, easing = FastOutSlowInEasing))
+                            markerX.animateTo(target, tween(780, easing = FastOutSlowInEasing))
+                            rollLift.animateTo(0f, tween(150, easing = FastOutSlowInEasing))
+                            delay(100)
+                            filmRollVisible = false
+                        }
                     }
                     NavigationBar(
                         modifier = Modifier.fillMaxSize(),
                         containerColor = if (systemDark) Color(0xFF0B101B) else Color.White,
                         tonalElevation = 0.dp
                     ) {
-                        NavigationBarItem(currentTab == 0, { currentTab = 0; rollRotation += 1080f }, {
+                        NavigationBarItem(currentTab == 0, { selectTab(0) }, {
                             Icon(Icons.Default.Home, null, modifier = Modifier.size(25.dp))
                         }, label = { Text("Home") })
-                        NavigationBarItem(currentTab == 1, { currentTab = 1; rollRotation += 1080f }, {
+                        NavigationBarItem(currentTab == 1, { selectTab(1) }, {
                             Icon(Icons.Default.PlayCircleFilled, null, modifier = Modifier.size(27.dp))
                         }, label = { Text("Player") })
-                        NavigationBarItem(currentTab == 2, { currentTab = 2; rollRotation += 1080f }, {
+                        NavigationBarItem(currentTab == 2, { selectTab(2) }, {
                             Icon(Icons.Default.VideoLibrary, null, modifier = Modifier.size(25.dp))
                         }, label = { Text("Library") })
                     }
-                    FilmRollIndicator(
-                        modifier = Modifier.offset {
-                            IntOffset(markerX.value.roundToInt(), 2.dp.roundToPx())
-                        }.size(20.dp).graphicsLayer { rotationZ = animatedRollRotation }
-                    )
+                    if (filmRollVisible) {
+                        FilmRollIndicator(
+                            darkTheme = systemDark,
+                            modifier = Modifier.offset {
+                                IntOffset(markerX.value.roundToInt(), 2.dp.roundToPx() + rollLift.value.roundToInt())
+                            }.size(22.dp).graphicsLayer { rotationZ = animatedRollRotation }
+                        )
+                    }
                 }
             }
         }
@@ -679,7 +696,7 @@ private fun UPlayHome(
                                             ) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp)) }
                                             IconButton(
                                                 onClick = { if (player.isPlaying) player.pause() else player.play(); controlsVisible = true },
-                                                modifier = Modifier.size(66.dp).background(Green, CircleShape)
+                                                modifier = Modifier.size(66.dp).background(Brush.linearGradient(listOf(Color(0xFF8BE7FF), Color(0xFF4BAEFF))), CircleShape)
                                             ) {
                                                 Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                                     if (isPlaying) "Pause" else "Play", tint = Ink, modifier = Modifier.size(42.dp))
@@ -743,8 +760,8 @@ private fun UPlayHome(
                                                 modifier = Modifier.fillMaxWidth().height(24.dp),
                                                 colors = SliderDefaults.colors(
                                                     thumbColor = Color.White,
-                                                    activeTrackColor = Green,
-                                                    inactiveTrackColor = Color(0x66FFFFFF),
+                                                    activeTrackColor = Color(0xFF67D5FF),
+                                                    inactiveTrackColor = Color(0x667F9AB2),
                                                     activeTickColor = Color.Transparent,
                                                     inactiveTickColor = Color.Transparent
                                                 )
@@ -1018,7 +1035,7 @@ private fun UPlayHome(
                     modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Spacer(Modifier.weight(0.60f))
+                    Spacer(Modifier.weight(0.44f))
                     Box(Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.align(Alignment.Center),
@@ -1044,6 +1061,11 @@ private fun UPlayHome(
                                 color = foreground
                             )
                         }
+                        val themeIconRotation by animateFloatAsState(
+                            targetValue = if (dark) 180f else 0f,
+                            animationSpec = tween(420, easing = FastOutSlowInEasing),
+                            label = "theme-sun-moon-rotation"
+                        )
                         IconButton(
                             onClick = { onToggleTheme(!darkTheme) },
                             modifier = Modifier.align(Alignment.CenterEnd).size(44.dp)
@@ -1052,14 +1074,15 @@ private fun UPlayHome(
                             Icon(
                                 if (dark) Icons.Default.LightMode else Icons.Default.DarkMode,
                                 contentDescription = if (dark) "Switch to light theme" else "Switch to dark theme",
-                                tint = if (dark) Color(0xFF8DD8FF) else Color(0xFF267CB7)
+                                tint = if (dark) Color(0xFFFFD36B) else Color(0xFF267CB7),
+                                modifier = Modifier.rotate(themeIconRotation)
                             )
                         }
                     }
                     Spacer(Modifier.height(12.dp))
                     Text("YOUR PERSONAL MEDIA SPACE", color = if (dark) Color(0xFF8DD8FF) else Color(0xFF267CB7),
                         fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.4.sp)
-                    Spacer(Modifier.height(42.dp))
+                    Spacer(Modifier.height(28.dp))
                     Box(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
                             .background(
@@ -1076,7 +1099,8 @@ private fun UPlayHome(
                             modifier = Modifier.fillMaxWidth()
                                 .clip(RoundedCornerShape(21.dp))
                                 .background(fieldSurface)
-                                .drawBehind {
+                                .drawWithContent {
+                                    drawContent()
                                     val waveWidth = size.width * 0.30f
                                     val waveX = wave * (size.width + waveWidth * 2f) - waveWidth
                                     val midY = size.height * 0.5f
@@ -1106,9 +1130,9 @@ private fun UPlayHome(
                                         Brush.horizontalGradient(
                                             listOf(
                                                 Color(0x008DD8FF),
+                                                Color(0x998DD8FF),
+                                                Color(0xD9D9F7FF),
                                                 Color(0x668DD8FF),
-                                                Color(0x99C3F4FF),
-                                                Color(0x338DD8FF),
                                                 Color(0x008DD8FF)
                                             ),
                                             startX = waveX,
@@ -1496,26 +1520,25 @@ private fun RadialControl(
 }
 
 @Composable
-private fun FilmRollIndicator(modifier: Modifier = Modifier) {
+private fun FilmRollIndicator(darkTheme: Boolean, modifier: Modifier = Modifier) {
+    val reel = if (darkTheme) Color(0xFFF2FAFF) else Color(0xFF101827)
+    val perforation = if (darkTheme) Color(0xFF0B101B) else Color(0xFFF7F9FD)
     Canvas(modifier = modifier) {
         val diameter = size.minDimension
         val center = Offset(size.width / 2f, size.height / 2f)
         val radius = diameter * 0.43f
-        drawCircle(Color(0xFF70D2FF), radius = radius, center = center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = diameter * 0.13f))
-        drawCircle(Color(0xFFB8ECFF), radius = diameter * 0.15f, center = center)
+        drawCircle(reel, radius = radius, center = center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = diameter * 0.16f))
+        drawCircle(reel, radius = diameter * 0.14f, center = center)
         val holeRadius = diameter * 0.075f
         val orbit = diameter * 0.27f
-        for (index in 0 until 5) {
-            val angle = (Math.PI * 2.0 * index / 5.0) - Math.PI / 2.0
-            drawCircle(
-                Color(0xFFB8ECFF),
-                radius = holeRadius,
-                center = Offset(
-                    center.x + kotlin.math.cos(angle).toFloat() * orbit,
-                    center.y + kotlin.math.sin(angle).toFloat() * orbit
-                )
-            )
+        for (index in 0 until 6) {
+            val angle = (Math.PI * 2.0 * index / 6.0) - Math.PI / 2.0
+            drawCircle(perforation, radius = holeRadius, center = Offset(
+                center.x + kotlin.math.cos(angle).toFloat() * orbit,
+                center.y + kotlin.math.sin(angle).toFloat() * orbit
+            ))
         }
+        drawCircle(Color(0xFF8DD8FF).copy(alpha = if (darkTheme) 0.9f else 0.75f), radius = diameter * 0.08f, center = center)
     }
 }
 
