@@ -30,10 +30,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Settings
@@ -59,12 +66,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -99,9 +109,13 @@ class MainActivity : ComponentActivity() {
             repeatMode = if (preferences.getBoolean("repeat_video", false)) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         }
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(
+            val systemDark = isSystemInDarkTheme()
+            MaterialTheme(colorScheme = if (systemDark) darkColorScheme(
                 primary = Blue, secondary = Green, background = Ink, surface = Panel,
                 onBackground = Color.White, onSurface = Color.White
+            ) else lightColorScheme(
+                primary = Blue, secondary = Color(0xFF167DDB), background = Color(0xFFF7F9FD),
+                surface = Color.White, onBackground = Color(0xFF101725), onSurface = Color(0xFF101725)
             )) {
                 UPlayHome(
                     player = player,
@@ -154,6 +168,7 @@ private fun UPlayHome(
     var playbackPosition by remember { mutableLongStateOf(0L) }
     var playbackDuration by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) } // Home, Player, Library
     var controlsVisible by remember { mutableStateOf(true) }
@@ -323,9 +338,11 @@ private fun UPlayHome(
     val configuration = LocalConfiguration.current
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Ink) {
-        Scaffold(containerColor = Ink, contentWindowInsets = if (fullScreen) WindowInsets(0,0,0,0) else WindowInsets.safeDrawing, bottomBar = {
-            if (!fullScreen) NavigationBar(containerColor = Color(0xFF0B101B), tonalElevation = 0.dp) {
+    val systemDark = isSystemInDarkTheme()
+    val appBackground = if (systemDark) Ink else Color(0xFFF7F9FD)
+    Surface(modifier = Modifier.fillMaxSize(), color = appBackground) {
+        Scaffold(containerColor = appBackground, contentWindowInsets = if (fullScreen) WindowInsets(0,0,0,0) else WindowInsets.safeDrawing, bottomBar = {
+            if (!fullScreen) NavigationBar(containerColor = if (systemDark) Color(0xFF0B101B) else Color.White, tonalElevation = 0.dp) {
                 NavigationBarItem(currentTab == 0, { currentTab = 0 }, { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
                 NavigationBarItem(currentTab == 1, { currentTab = 1 }, { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Player") })
                 NavigationBarItem(currentTab == 2, { currentTab = 2 }, { Icon(Icons.Default.VideoLibrary, null) }, label = { Text("Library") })
@@ -643,15 +660,191 @@ private fun UPlayHome(
                     }
                 }
             } else {
-                Column(Modifier.fillMaxSize().padding(insets).padding(22.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-                    Text("UPlay",fontSize=30.sp,fontWeight=FontWeight.ExtraBold,color=Color.White)
-                    Text("Everything you watch.",fontSize=27.sp,fontWeight=FontWeight.Bold,color=Color.White)
-                    Text("One calm place for your videos.",color=Muted)
-                    Button(onClick={picker.launch(arrayOf("video/*"))},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.FolderOpen,null);Spacer(Modifier.width(8.dp));Text("Open a video")}
-                    OutlinedButton(onClick={currentTab=1},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.PlayArrow,null);Spacer(Modifier.width(8.dp));Text("Go to Player")}
-                    Text("Recently watched",fontSize=19.sp,fontWeight=FontWeight.Bold,color=Color.White)
-                    if(recentVideos.isEmpty()) Text("Videos you open will appear here.",color=Muted)
-                    else recentVideos.take(4).forEach{Text(it.title,color=Color.White,modifier=Modifier.fillMaxWidth().background(Panel,RoundedCornerShape(12.dp)).padding(14.dp),maxLines=1)}
+                val dark = isSystemInDarkTheme()
+                val foreground = if (dark) Color(0xFFF7FAFF) else Color(0xFF101725)
+                val secondaryText = if (dark) Color(0xFF9BA9BC) else Color(0xFF68758A)
+                val fieldSurface = if (dark) Color(0xFF111A29) else Color.White
+                val fluid = rememberInfiniteTransition(label = "uplay-link-fluid")
+                val wave by fluid.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 3600, easing = LinearEasing),
+                        repeatMode = RepeatMode.Restart
+                    ),
+                    label = "link-wave"
+                )
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(Modifier.weight(0.85f))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+                        Box(
+                            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
+                                .background(if (dark) Color(0xFF13243A) else Color(0xFFE6F5FF)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("U", fontSize = 34.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif,
+                                color = if (dark) Color.White else Color(0xFF111827))
+                            Text("▶", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF65C9FF),
+                                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 7.dp, bottom = 7.dp))
+                        }
+                        Text(
+                            "UPlay",
+                            fontSize = 43.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.SansSerif,
+                            letterSpacing = (-1.8).sp,
+                            color = foreground
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text("YOUR PERSONAL MEDIA SPACE", color = if (dark) Color(0xFF8DD8FF) else Color(0xFF267CB7),
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.4.sp)
+                    Spacer(Modifier.height(42.dp))
+                    Box(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(Color(0xFF91DFFF), Color(0xFF5EBEFF), Color(0xFFC0EEFF), Color(0xFF78C9FF)),
+                                    startX = wave * 900f,
+                                    endX = wave * 900f + 520f
+                                )
+                            ).padding(1.5.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = url,
+                            onValueChange = { url = it },
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(21.dp)).background(fieldSurface),
+                            placeholder = { Text("Paste a video link…", color = secondaryText) },
+                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = "Video link", tint = Color(0xFF61BFFF)) },
+                            trailingIcon = {
+                                IconButton(onClick = {
+                                    val copied = clipboard.getText()?.text.orEmpty().trim()
+                                    if (copied.isNotBlank()) {
+                                        url = copied
+                                        message = "Link pasted. Tap Play link to continue."
+                                    } else message = "Your clipboard is empty."
+                                }) {
+                                    Icon(Icons.Default.ContentPaste, contentDescription = "Paste link", tint = Color(0xFF61BFFF))
+                                }
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            shape = RoundedCornerShape(21.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color.Transparent,
+                                unfocusedBorderColor = Color.Transparent,
+                                focusedContainerColor = fieldSurface,
+                                unfocusedContainerColor = fieldSurface,
+                                focusedTextColor = foreground,
+                                unfocusedTextColor = foreground,
+                                cursorColor = Color(0xFF61BFFF)
+                            )
+                        )
+                    }
+                    Spacer(Modifier.height(13.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = { picker.launch(arrayOf("video/*")) },
+                            modifier = Modifier.weight(1f).height(50.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Open video", fontWeight = FontWeight.SemiBold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val candidate = url.trim()
+                                val parsed = runCatching { Uri.parse(candidate) }.getOrNull()
+                                val validUrl = parsed != null &&
+                                    (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
+                                    !parsed.host.isNullOrBlank()
+                                if (validUrl) {
+                                    onPlayUrl(candidate)
+                                    selected = true
+                                    currentTab = 1
+                                    controlsVisible = true
+                                    playbackError = null
+                                    val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                    recentVideos.removeAll { it.uri == candidate }
+                                    recentVideos.add(0, entry)
+                                    while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                                    saveRecentVideos(context, recentVideos)
+                                    message = "Loading video link…"
+                                } else message = "Enter a valid HTTP(S) video link first."
+                            },
+                            modifier = Modifier.weight(1f).height(50.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = if (dark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Play link", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Spacer(Modifier.height(34.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Recently watched", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = foreground)
+                            Text("Pick up where you left off", fontSize = 12.sp, color = secondaryText)
+                        }
+                        TextButton(onClick = { currentTab = 2 }) {
+                            Text("View library", color = if (dark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
+                        }
+                    }
+                    if (recentVideos.isEmpty()) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            color = if (dark) Color(0xFF101827) else Color(0xFFEDF3FA),
+                            shape = RoundedCornerShape(18.dp)
+                        ) {
+                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Color(0xFF61BFFF), modifier = Modifier.size(30.dp))
+                                Column {
+                                    Text("Your next watch starts here", color = foreground, fontWeight = FontWeight.SemiBold)
+                                    Text("Open a video or paste a direct media link.", color = secondaryText, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            recentVideos.take(2).forEach { entry ->
+                                Surface(
+                                    onClick = {
+                                        runCatching {
+                                            if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
+                                            player?.seekTo(entry.positionMs)
+                                            selected = true
+                                            currentTab = 1
+                                            controlsVisible = true
+                                            playbackError = null
+                                            message = "Resuming ${entry.title}…"
+                                        }.onFailure { message = "Couldn't reopen this video." }
+                                    },
+                                    color = if (dark) Color(0xFF111A29) else Color(0xFFEDF3FA),
+                                    shape = RoundedCornerShape(15.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF61BFFF), modifier = Modifier.size(25.dp))
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(entry.title, color = foreground, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                            Text(if (entry.positionMs > 0L) "Resume at ${formatTime(entry.positionMs)}" else "Recently added",
+                                                color = secondaryText, fontSize = 11.sp)
+                                        }
+                                        Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color(0xFF61BFFF))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
                 }
             }
         }
