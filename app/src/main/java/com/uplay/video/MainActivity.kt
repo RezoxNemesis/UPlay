@@ -70,7 +70,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.HomeRounded
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
@@ -525,7 +524,7 @@ private fun UPlayHome(
                         tonalElevation = 0.dp
                     ) {
                         NavigationBarItem(currentTab == 0, { currentTab = 0; rollRotation += 1080f }, {
-                            Icon(Icons.Default.HomeRounded, null, modifier = Modifier.size(25.dp))
+                            Icon(Icons.Default.Home, null, modifier = Modifier.size(25.dp))
                         }, label = { Text("Home") })
                         NavigationBarItem(currentTab == 1, { currentTab = 1; rollRotation += 1080f }, {
                             Icon(Icons.Default.PlayCircleFilled, null, modifier = Modifier.size(27.dp))
@@ -999,7 +998,6 @@ private fun UPlayHome(
                             }
                         }
                     }
-                }
                 }
             } else {
                 val dark = darkTheme
