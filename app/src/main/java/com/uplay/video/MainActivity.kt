@@ -361,19 +361,23 @@ private fun UPlayHome(
     }
 
     LaunchedEffect(player, selected, isPlaying, isMusicMode, recentVideos.size, recentAudios.size) {
+        var persistenceTick = 0
         while (selected && player != null) {
             playbackPosition = player.currentPosition.coerceAtLeast(0L)
             playbackDuration = player.duration.takeIf { it > 0L } ?: 0L
-            val activeUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
-            if (activeUri != null && playbackPosition > 0L) {
-                val history = if (isMusicMode) recentAudios else recentVideos
-                val index = history.indexOfFirst { it.uri == activeUri }
-                if (index >= 0) {
-                    history[index] = history[index].copy(positionMs = playbackPosition, durationMs = playbackDuration)
-                    saveRecentVideos(context, history, if (isMusicMode) "recent_audio" else "recent_videos")
+            if (persistenceTick % 10 == 0) {
+                val activeUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
+                if (activeUri != null && playbackPosition > 0L) {
+                    val history = if (isMusicMode) recentAudios else recentVideos
+                    val index = history.indexOfFirst { it.uri == activeUri }
+                    if (index >= 0) {
+                        history[index] = history[index].copy(positionMs = playbackPosition, durationMs = playbackDuration)
+                        saveRecentVideos(context, history, if (isMusicMode) "recent_audio" else "recent_videos")
+                    }
                 }
             }
-            delay(2500)
+            persistenceTick++
+            delay(250)
         }
     }
 
@@ -763,19 +767,12 @@ private fun UPlayHome(
                                         ) {
                                             val duration = (player.duration).takeIf { it > 0L } ?: 0L
                                             val position = player.currentPosition.coerceIn(0L, duration.coerceAtLeast(1L))
-                                            Slider(
-                                                value = if (duration > 0L) position.toFloat() / duration else 0f,
-                                                onValueChange = { fraction ->
-                                                    if (duration > 0L) player.seekTo((duration * fraction).toLong())
-                                                },
-                                                modifier = Modifier.fillMaxWidth().height(24.dp),
-                                                colors = SliderDefaults.colors(
-                                                    thumbColor = Color.White,
-                                                    activeTrackColor = Color(0xFF67D5FF),
-                                                    inactiveTrackColor = Color(0x667F9AB2),
-                                                    activeTickColor = Color.Transparent,
-                                                    inactiveTickColor = Color.Transparent
-                                                )
+                                            CinematicSeekBar(
+                                                positionMs = playbackPosition,
+                                                durationMs = duration,
+                                                isPlaying = isPlaying,
+                                                onSeek = { target -> if (duration > 0L) player.seekTo(target.coerceIn(0L, duration)) },
+                                                modifier = Modifier.fillMaxWidth().height(30.dp)
                                             )
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
@@ -1511,6 +1508,86 @@ private fun AudioBar(index: Int) {
         modifier = Modifier.width(4.dp).height(height.dp).clip(RoundedCornerShape(4.dp))
             .background(Brush.verticalGradient(listOf(Color(0xFFB5E9FF), Color(0xFF3BAEFF))))
     )
+}
+
+@Composable
+private fun CinematicSeekBar(
+    positionMs: Long,
+    durationMs: Long,
+    isPlaying: Boolean,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val rawProgress = if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    val progress by animateFloatAsState(
+        targetValue = rawProgress,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "cinematic-seek-progress"
+    )
+    val pulse = rememberInfiniteTransition(label = "seekbar-glow")
+    val glowAlpha by pulse.animateFloat(
+        initialValue = 0.20f,
+        targetValue = if (isPlaying) 0.72f else 0.38f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "seekbar-glow-alpha"
+    )
+    Canvas(
+        modifier = modifier
+            .pointerInput(durationMs) {
+                detectTapGestures { point ->
+                    if (durationMs > 0L && size.width > 0) {
+                        onSeek((durationMs * (point.x / size.width).coerceIn(0f, 1f)).toLong())
+                    }
+                }
+            }
+            .pointerInput(durationMs) {
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    if (durationMs > 0L && size.width > 0) {
+                        onSeek((durationMs * (change.position.x / size.width).coerceIn(0f, 1f)).toLong())
+                    }
+                }
+            }
+    ) {
+        val centerY = size.height / 2f
+        val trackHeight = 5.dp.toPx()
+        val thumbRadius = 5.5.dp.toPx()
+        val inset = thumbRadius
+        val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+        val startX = inset
+        val endX = size.width - inset
+        val progressX = startX + usableWidth * progress
+        drawLine(
+            color = Color(0xFF253449),
+            start = Offset(startX, centerY),
+            end = Offset(endX, centerY),
+            strokeWidth = trackHeight,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+        if (progressX > startX) {
+            drawLine(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color(0xFF4BAEFF), Color(0xFF8BE7FF), Color(0xFFE4FAFF)),
+                    startX = startX,
+                    endX = endX
+                ),
+                start = Offset(startX, centerY),
+                end = Offset(progressX, centerY),
+                strokeWidth = trackHeight,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+        }
+        drawCircle(
+            color = Color(0xFF6DD8FF).copy(alpha = glowAlpha),
+            radius = thumbRadius * 2.1f,
+            center = Offset(progressX, centerY)
+        )
+        drawCircle(color = Color(0xFFBCEFFF), radius = thumbRadius, center = Offset(progressX, centerY))
+        drawCircle(color = Color(0xFF53BFFF), radius = thumbRadius * 0.42f, center = Offset(progressX, centerY))
+    }
 }
 
 @Composable
