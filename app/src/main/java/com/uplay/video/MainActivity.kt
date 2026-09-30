@@ -8,6 +8,7 @@ import android.content.Intent
 import android.provider.OpenableColumns
 import android.net.Uri
 import android.view.View
+import android.view.LayoutInflater
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -45,12 +46,14 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
@@ -309,7 +312,7 @@ private fun UPlayHome(
                 player?.seekTo(entry.positionMs)
             }.onSuccess {
                 selected = true
-                currentTab = 0
+                currentTab = 1
                 controlsVisible = true
                 message = "Loading selected video…"
             }.onFailure { message = "Couldn't open this video. Try another file." }
@@ -359,16 +362,15 @@ private fun UPlayHome(
 
                     Box(
                         modifier = Modifier.weight(1f).fillMaxWidth()
-                            .clip(RoundedCornerShape(if (landscape) 8.dp else 22.dp))
+                            .clip(if (fullScreen || landscape) RoundedCornerShape(0.dp) else RoundedCornerShape(22.dp))
                             .background(Color.Black)
                     ) {
                         if (selected && player != null && player.currentMediaItem != null) {
                             AndroidView(
                                 factory = { viewContext ->
-                                    PlayerView(viewContext).apply {
+                                    (LayoutInflater.from(viewContext).inflate(R.layout.uplay_player_texture_view, null, false) as PlayerView).apply {
                                         this.player = player
                                         useController = false
-                                        setUseTextureView(true)
                                         this.resizeMode = resizeMode
                                         keepScreenOn = true
                                         setShutterBackgroundColor(android.graphics.Color.BLACK)
@@ -464,9 +466,9 @@ private fun UPlayHome(
                                                 },
                                                 modifier = Modifier.fillMaxWidth().height(24.dp),
                                                 colors = SliderDefaults.colors(
-                                                    thumbColor = Green,
+                                                    thumbColor = Color.White,
                                                     activeTrackColor = Green,
-                                                    inactiveTrackColor = Color(0xFF5A6270),
+                                                    inactiveTrackColor = Color(0x66FFFFFF),
                                                     activeTickColor = Color.Transparent,
                                                     inactiveTickColor = Color.Transparent
                                                 )
@@ -479,9 +481,9 @@ private fun UPlayHome(
                                                 Text(formatTime(position), color = Color.White, fontSize = 11.sp)
                                                 Text(formatTime(duration), color = Color.White, fontSize = 11.sp)
                                                 IconButton(
-                                                    onClick = { fullScreen = true; controlsVisible = true },
+                                                    onClick = { fullScreen = !fullScreen; controlsVisible = true },
                                                     modifier = Modifier.size(32.dp)
-                                                ) { Icon(Icons.Default.Fullscreen, "Enter full screen", tint = Color.White) }
+                                                ) { Icon(if (fullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, if (fullScreen) "Exit full screen" else "Enter full screen", tint = Color.White) }
                                             }
                                         }
                                     }
@@ -632,7 +634,7 @@ private fun UPlayHome(
                                                 if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
                                                 player?.seekTo(entry.positionMs)
                                                 selected = true
-                                                currentTab = 0
+                                                currentTab = 1
                                                 controlsVisible = true
                                                 playbackError = null
                                                 message = "Resuming ${entry.title}…"
