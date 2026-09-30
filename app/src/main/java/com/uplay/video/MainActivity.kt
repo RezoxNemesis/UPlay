@@ -2,7 +2,11 @@ package com.uplay.video
 
 import android.app.Activity
 import android.content.Context
+import android.Manifest
+import android.content.ContentUris
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
+import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.CancellationSignal
@@ -18,6 +22,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -97,6 +102,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -113,7 +119,9 @@ private data class RecentVideo(
     val remote: Boolean,
     val sizeBytes: Long = 0L,
     val location: String = "",
-    val durationMs: Long = 0L
+    val durationMs: Long = 0L,
+    val folder: String = "",
+    val source: String = ""
 )
 
 class MainActivity : ComponentActivity() {
@@ -202,7 +210,45 @@ private fun UPlayHome(
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) } // Home, Player, Library
     var libraryMode by remember { mutableIntStateOf(0) } // Videos, Music
+    var libraryMode by remember { mutableIntStateOf(0) } // Videos, Music
     var controlsVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        val requiredPermissions = when {
+            Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO
+            )
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        mediaPermissionGranted = requiredPermissions.all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!mediaPermissionGranted) mediaPermissionLauncher.launch(requiredPermissions)
+    }
+
+    LaunchedEffect(mediaPermissionGranted) {
+        if (mediaPermissionGranted) {
+            val scanned = withContext(Dispatchers.IO) { scanDeviceMedia(context) }
+            deviceVideos.clear()
+            deviceVideos.addAll(scanned.first.map { media ->
+                recentVideos.firstOrNull { it.uri == media.uri }?.let {
+                    media.copy(positionMs = it.positionMs, durationMs = media.durationMs.takeIf { d -> d > 0L } ?: it.durationMs)
+                } ?: media
+            })
+            deviceAudios.clear()
+            deviceAudios.addAll(scanned.second.map { media ->
+                recentAudios.firstOrNull { it.uri == media.uri }?.let {
+                    media.copy(positionMs = it.positionMs, durationMs = media.durationMs.takeIf { d -> d > 0L } ?: it.durationMs)
+                } ?: media
+            })
+        }
+    }
+
     LaunchedEffect(incomingSharedUrl) {
         val sharedUrl = incomingSharedUrl ?: return@LaunchedEffect
         url = sharedUrl
@@ -213,6 +259,12 @@ private fun UPlayHome(
     }
     val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
     val recentAudios = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context, "recent_audio")) } }
+    val deviceVideos = remember { mutableStateListOf<RecentVideo>() }
+    val deviceAudios = remember { mutableStateListOf<RecentVideo>() }
+    var mediaPermissionGranted by remember { mutableStateOf(false) }
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        mediaPermissionGranted = results.values.any { it }
+    }
     var locked by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var radialOpen by remember { mutableStateOf(false) }
@@ -754,7 +806,19 @@ private fun UPlayHome(
                 val foreground = if (dark) Color(0xFFF7FAFF) else Color(0xFF101725)
                 val secondaryText = if (dark) Color(0xFF9BA9BC) else Color(0xFF68758A)
                 val cardSurface = if (dark) Panel else Color.White
-                val mediaItems = if (libraryMode == 0) recentVideos else recentAudios
+                val rawMediaItems = if (libraryMode == 0) {
+                    (deviceVideos + recentVideos).distinctBy { it.uri }
+                } else {
+                    (deviceAudios + recentAudios).distinctBy { it.uri }
+                }
+                val mediaItems = rawMediaItems.groupBy { entry ->
+                    val folderName = entry.folder.trim('/')
+                    when {
+                        entry.remote -> entry.source.ifBlank { "Online links" }
+                        folderName.isNotBlank() && folderName.lowercase() !in listOf("download", "downloads") -> folderName
+                        else -> entry.source.ifBlank { if (libraryMode == 0) "Other videos" else "Other music" }
+                    }
+                }.toList()
                 Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 18.dp, vertical = 14.dp)) {
                     Text("Your library", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = foreground)
                     Text("History, progress and file details in one place.", color = secondaryText, fontSize = 13.sp)
@@ -778,7 +842,7 @@ private fun UPlayHome(
                                     Spacer(Modifier.width(7.dp))
                                     Text(label, color = if (libraryMode == index) Color(0xFF102033) else secondaryText, fontWeight = FontWeight.SemiBold)
                                     Spacer(Modifier.width(5.dp))
-                                    Text((if (index == 0) recentVideos.size else recentAudios.size).toString(),
+                                    Text((if (index == 0) (deviceVideos.size + recentVideos.size) else (deviceAudios.size + recentAudios.size)).toString(),
                                         color = if (libraryMode == index) Color(0xFF102033) else secondaryText, fontSize = 11.sp)
                                 }
                             }
@@ -801,7 +865,11 @@ private fun UPlayHome(
                         }
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.weight(1f)) {
-                            items(mediaItems, key = { it.uri }) { entry ->
+                            items(mediaItems, key = { it.first }) { group ->
+                                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Text(group.first, color = Color(0xFF45B8FF), fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+                                    group.second.forEach { entry ->
                                 Surface(color = cardSurface, shape = RoundedCornerShape(19.dp), modifier = Modifier.fillMaxWidth()) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -836,6 +904,7 @@ private fun UPlayHome(
                                                 message = "Resuming ${entry.title}…"
                                             }.onFailure { message = "Couldn't reopen this media file." }
                                         }) { Icon(Icons.Default.PlayArrow, "Play ${entry.title}", tint = Color(0xFF2EAAFF), modifier = Modifier.size(29.dp)) }
+                                    }
                                     }
                                 }
                             }
@@ -1207,7 +1276,9 @@ private fun loadRecentVideos(context: Context, key: String = "recent_videos"): L
             remote = item.optBoolean("remote", false),
             sizeBytes = item.optLong("sizeBytes", 0L).coerceAtLeast(0L),
             location = item.optString("location", uri),
-            durationMs = item.optLong("durationMs", 0L).coerceAtLeast(0L)
+            durationMs = item.optLong("durationMs", 0L).coerceAtLeast(0L),
+            folder = item.optString("folder", ""),
+            source = item.optString("source", "")
         )
     }.take(30)
 }.getOrDefault(emptyList())
@@ -1224,11 +1295,84 @@ private fun saveRecentVideos(context: Context, videos: List<RecentVideo>, key: S
                 put("sizeBytes", video.sizeBytes)
                 put("location", video.location)
                 put("durationMs", video.durationMs)
+                put("folder", video.folder)
+                put("source", video.source)
             })
         }
         context.getSharedPreferences("uplay_library", Context.MODE_PRIVATE)
             .edit().putString(key, array.toString()).apply()
     }
+}
+
+private fun scanDeviceMedia(context: Context): Pair<List<RecentVideo>, List<RecentVideo>> {
+    val videos = mutableListOf<RecentVideo>()
+    val audios = mutableListOf<RecentVideo>()
+    val volumes = if (Build.VERSION.SDK_INT >= 29) {
+        runCatching { MediaStore.getExternalVolumeNames(context).toList() }.getOrDefault(listOf("external"))
+    } else listOf("external")
+    for (volume in volumes) {
+        val videoCollection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Video.Media.getContentUri(volume)
+            else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        val audioCollection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Audio.Media.getContentUri(volume)
+            else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        queryMediaCollection(context, videoCollection, false, videos)
+        queryMediaCollection(context, audioCollection, true, audios)
+    }
+    return videos.distinctBy { it.uri } to audios.distinctBy { it.uri }
+}
+
+private fun queryMediaCollection(context: Context, collection: Uri, isAudio: Boolean, destination: MutableList<RecentVideo>) {
+    val idColumn = MediaStore.MediaColumns._ID
+    val nameColumn = MediaStore.MediaColumns.DISPLAY_NAME
+    val sizeColumn = MediaStore.MediaColumns.SIZE
+    val dateColumn = MediaStore.MediaColumns.DATE_ADDED
+    val durationColumn = MediaStore.MediaColumns.DURATION
+    val columns = mutableListOf(idColumn, nameColumn, sizeColumn, dateColumn, durationColumn)
+    if (Build.VERSION.SDK_INT >= 29) columns += MediaStore.MediaColumns.RELATIVE_PATH
+    runCatching {
+        context.contentResolver.query(collection, columns.toTypedArray(), null, null, "$dateColumn DESC")?.use { cursor ->
+            val idIndex = cursor.getColumnIndex(idColumn)
+            val nameIndex = cursor.getColumnIndex(nameColumn)
+            val sizeIndex = cursor.getColumnIndex(sizeColumn)
+            val durationIndex = cursor.getColumnIndex(durationColumn)
+            val pathIndex = if (Build.VERSION.SDK_INT >= 29) cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH) else -1
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idIndex)
+                val title = cursor.getString(nameIndex)?.takeIf { it.isNotBlank() } ?: if (isAudio) "Audio" else "Video"
+                val path = if (pathIndex >= 0) cursor.getString(pathIndex).orEmpty().trim('/') else ""
+                val uri = ContentUris.withAppendedId(collection, id).toString()
+                destination += RecentVideo(
+                    uri = uri,
+                    title = title,
+                    positionMs = 0L,
+                    remote = false,
+                    sizeBytes = if (sizeIndex >= 0) cursor.getLong(sizeIndex).coerceAtLeast(0L) else 0L,
+                    location = path.ifBlank { uri },
+                    durationMs = if (durationIndex >= 0) cursor.getLong(durationIndex).coerceAtLeast(0L) else 0L,
+                    folder = path,
+                    source = classifyMediaSource(title, path, isAudio)
+                )
+            }
+        }
+    }
+}
+
+private fun classifyMediaSource(title: String, folder: String, isAudio: Boolean): String {
+    val text = "$title $folder".lowercase()
+    val knownSources = listOf(
+        "instagram" to "Instagram",
+        "whatsapp" to "WhatsApp",
+        "telegram" to "Telegram",
+        "facebook" to "Facebook",
+        "youtube" to "YouTube",
+        "tiktok" to "TikTok",
+        "twitter" to "Twitter / X",
+        "x.com" to "Twitter / X",
+        "hamster" to "Hamster",
+        "snapchat" to "Snapchat"
+    )
+    return knownSources.firstOrNull { text.contains(it.first) }?.second
+        ?: if (isAudio) "Other music" else "Other videos"
 }
 
 private fun queryFileSize(context: Context, uri: Uri): Long = runCatching {
