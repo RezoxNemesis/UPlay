@@ -15,6 +15,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -124,6 +126,7 @@ private fun UPlayHome(
     var settingsOpen by remember { mutableStateOf(false) }
     var trackDialog by remember { mutableStateOf(0) } // 1 = audio, 2 = subtitles
     var isPlaying by remember { mutableStateOf(false) }
+    var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
@@ -175,6 +178,46 @@ private fun UPlayHome(
         if (controlsVisible && isPlaying && !locked) {
             delay(3500)
             controlsVisible = false
+        }
+    }
+
+    val subtitlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { subtitleUri ->
+        if (subtitleUri != null && player != null) {
+            val videoUri = player.currentMediaItem?.localConfiguration?.uri
+            if (videoUri == null) {
+                message = "Open a video before adding subtitles."
+            } else {
+                val name = subtitleUri.lastPathSegment?.substringAfterLast('/')?.lowercase().orEmpty()
+                val mime = when {
+                    name.endsWith(".srt") -> "application/x-subrip"
+                    name.endsWith(".ttml") || name.endsWith(".xml") -> "application/ttml+xml"
+                    else -> "text/vtt"
+                }
+                runCatching {
+                    val wasPlaying = player.playWhenReady
+                    val position = player.currentPosition
+                    val item = MediaItem.Builder()
+                        .setUri(videoUri)
+                        .setSubtitleConfigurations(
+                            listOf(
+                                MediaItem.SubtitleConfiguration.Builder(subtitleUri)
+                                    .setMimeType(mime)
+                                    .setLanguage("und")
+                                    .setLabel("External subtitles")
+                                    .build()
+                            )
+                        )
+                        .build()
+                    player.setMediaItem(item, position)
+                    player.prepare()
+                    player.playWhenReady = wasPlaying
+                }.onSuccess {
+                    trackDialog = 2
+                    message = "External subtitles added."
+                }.onFailure {
+                    message = "Couldn't load that subtitle file. Try SRT or WebVTT."
+                }
+            }
         }
     }
 
@@ -586,6 +629,35 @@ private fun UPlayHome(
             title = { Text("Playback settings", color = Color.White) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Playback speed", color = Muted)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
+                            FilterChip(
+                                selected = playbackSpeed == speed,
+                                onClick = {
+                                    playbackSpeed = speed
+                                    player?.setPlaybackSpeed(speed)
+                                },
+                                label = { Text("${speed}x") }
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Repeat video", color = Muted)
+                        Switch(
+                            checked = player?.repeatMode == Player.REPEAT_MODE_ONE,
+                            onCheckedChange = {
+                                player?.repeatMode = if (it) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                            }
+                        )
+                    }
                     Text("Resize video", color = Muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         FilterChip(selected = resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT, onClick = {
@@ -602,7 +674,15 @@ private fun UPlayHome(
                         Icon(Icons.Default.GraphicEq, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Audio track")
                     }
                     OutlinedButton(onClick = { settingsOpen = false; trackDialog = 2 }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.Subtitles, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Subtitles")
+                        Icon(Icons.Default.Subtitles, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Embedded subtitles")
+                    }
+                    OutlinedButton(
+                        onClick = { settingsOpen = false; subtitlePicker.launch(arrayOf("text/*", "application/x-subrip", "application/ttml+xml")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Subtitles, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Load subtitle file")
                     }
                     Text("Tip: pinch to zoom. Double-tap either side to seek ±10 seconds. Tap the video to show controls.", color = Muted, fontSize = 12.sp)
                 }
