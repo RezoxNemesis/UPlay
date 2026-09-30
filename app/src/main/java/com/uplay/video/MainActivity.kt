@@ -341,21 +341,16 @@ private fun UPlayHome(
                 ) {
                     if (!landscape && !fullScreen) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.uplay_launcher),
-                                contentDescription = "UPlay logo",
-                                modifier = Modifier.size(38.dp)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                                Text("UPlay", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                                Text("YOUR VIDEO SPACE", fontSize = 9.sp, letterSpacing = 1.8.sp, color = Green)
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("PLAYER", fontSize = 10.sp, letterSpacing = 1.8.sp, color = Green, fontWeight = FontWeight.Bold)
+                                Text(if (selected) "Now playing" else "Ready to play", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
-                            Surface(color = Color(0xFF12372B), shape = RoundedCornerShape(50)) {
-                                Text("PLAYER", modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            Surface(color = Color(0xFF152B26), shape = RoundedCornerShape(50)) {
+                                Text(if (!selected) "READY" else if (isPlaying) "PLAYING" else "PAUSED",
+                                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
                                     color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
@@ -409,8 +404,8 @@ private fun UPlayHome(
                                         }
                                     }
                             )
-                            if (controlsVisible) {
-                                Box(Modifier.fillMaxSize().background(Color(0x55000000))) {
+                            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xB8000000), Color.Transparent, Color(0xD9000000))))) {
                                     if (locked) {
                                         IconButton(
                                             onClick = { locked = false; controlsVisible = true },
