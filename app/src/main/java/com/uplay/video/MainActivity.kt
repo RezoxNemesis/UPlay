@@ -42,6 +42,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -77,6 +80,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -210,6 +214,12 @@ private fun UPlayHome(
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) } // Home, Player, Library
     var libraryMode by remember { mutableIntStateOf(0) } // Videos, Music
+    var rollRotation by remember { mutableFloatStateOf(0f) }
+    val animatedRollRotation by animateFloatAsState(
+        targetValue = rollRotation,
+        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        label = "navigation-film-roll-rotation"
+    )
     var controlsVisible by remember { mutableStateOf(true) }
     val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
     val recentAudios = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context, "recent_audio")) } }
@@ -232,8 +242,15 @@ private fun UPlayHome(
             )
             else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        mediaPermissionGranted = requiredPermissions.all { permission ->
-            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        mediaPermissionGranted = when {
+            Build.VERSION.SDK_INT >= 33 -> {
+                val videoGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+                val audioGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+                val selectedGranted = Build.VERSION.SDK_INT >= 34 &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
+                (videoGranted && audioGranted) || selectedGranted
+            }
+            else -> ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
         if (!mediaPermissionGranted) mediaPermissionLauncher.launch(requiredPermissions)
     }
@@ -452,10 +469,29 @@ private fun UPlayHome(
     val appBackground = if (systemDark) Ink else Color(0xFFF7F9FD)
     Surface(modifier = Modifier.fillMaxSize(), color = appBackground) {
         Scaffold(containerColor = appBackground, contentWindowInsets = if (immersivePlayer) WindowInsets(0,0,0,0) else WindowInsets.safeDrawing, bottomBar = {
-            if (!fullScreen && !(landscape && selected)) NavigationBar(containerColor = if (systemDark) Color(0xFF0B101B) else Color.White, tonalElevation = 0.dp) {
-                NavigationBarItem(currentTab == 0, { currentTab = 0 }, { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
-                NavigationBarItem(currentTab == 1, { currentTab = 1 }, { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Player") })
-                NavigationBarItem(currentTab == 2, { currentTab = 2 }, { Icon(Icons.Default.VideoLibrary, null) }, label = { Text("Library") })
+            if (!fullScreen && !(landscape && selected)) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(82.dp)) {
+                    val markerX by animateDpAsState(
+                        targetValue = maxWidth * ((currentTab + 0.5f) / 3f) - 7.dp,
+                        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+                        label = "film-roll-tab-position"
+                    )
+                    NavigationBar(
+                        modifier = Modifier.fillMaxSize(),
+                        containerColor = if (systemDark) Color(0xFF0B101B) else Color.White,
+                        tonalElevation = 0.dp
+                    ) {
+                        NavigationBarItem(currentTab == 0, { currentTab = 0; rollRotation += 360f }, { Icon(Icons.Default.Home, null) }, label = { Text("Home") })
+                        NavigationBarItem(currentTab == 1, { currentTab = 1; rollRotation += 360f }, { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Player") })
+                        NavigationBarItem(currentTab == 2, { currentTab = 2; rollRotation += 360f }, { Icon(Icons.Default.VideoLibrary, null) }, label = { Text("Library") })
+                    }
+                    Icon(
+                        Icons.Default.VideoLibrary,
+                        contentDescription = "Animated navigation film roll",
+                        tint = Color(0xFF65C9FF),
+                        modifier = Modifier.offset(x = markerX, y = 1.dp).size(13.dp).rotate(animatedRollRotation)
+                    )
+                }
             }
         }
         ) { insets ->
@@ -1102,28 +1138,136 @@ private fun UPlayHome(
         }
     }
 
-    if (settingsOpen) ModalBottomSheet(onDismissRequest={settingsOpen=false},containerColor=Color(0xFF111722),shape=RoundedCornerShape(topStart=28.dp,topEnd=28.dp)) {
-        Column(Modifier.fillMaxWidth().padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-            Text("Playback controls",fontSize=23.sp,fontWeight=FontWeight.Bold,color=Color.White)
-            Text("PLAYBACK SPEED",color=Muted,fontSize=11.sp,fontWeight=FontWeight.Bold)
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                listOf(0.5f,0.75f,1f,1.25f,1.5f,2f).forEach{v->
-                    Surface(onClick={playbackSpeed=v;player?.setPlaybackSpeed(v);playerPreferences.edit().putFloat("playback_speed",v).apply()},
-                        modifier=Modifier.weight(1f).height(40.dp),shape=RoundedCornerShape(10.dp),color=if(playbackSpeed==v) Green else Panel) {
-                        Box(contentAlignment=Alignment.Center){Text(if(v==1f)"1×" else "${v}×",color=if(playbackSpeed==v) Ink else Color.White,fontSize=10.sp)}
+    if (settingsOpen) {
+        val dark = isSystemInDarkTheme()
+        val sheetSurface = if (dark) Color(0xFF0E1624) else Color(0xFFF8FBFF)
+        val cardSurface = if (dark) Color(0xFF172235) else Color.White
+        val primaryText = if (dark) Color(0xFFF7FAFF) else Color(0xFF101725)
+        val secondaryText = if (dark) Color(0xFF9BA9BC) else Color(0xFF68758A)
+        ModalBottomSheet(
+            onDismissRequest = { settingsOpen = false },
+            containerColor = sheetSurface,
+            shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
+            dragHandle = {
+                Box(Modifier.padding(vertical = 10.dp).width(38.dp).height(4.dp)
+                    .clip(CircleShape).background(secondaryText.copy(alpha = 0.45f)))
+            }
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(17.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+                    Box(
+                        Modifier.size(54.dp).clip(RoundedCornerShape(18.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF8DD8FF), Color(0xFF2589FF)))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.FitScreen, contentDescription = null, tint = Color(0xFF0B1727), modifier = Modifier.size(28.dp))
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Player studio", color = primaryText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text("Fine-tune your watching experience", color = secondaryText, fontSize = 12.sp)
                     }
                 }
-            }
-            Text("SCREEN FIT",color=Muted,fontSize=11.sp,fontWeight=FontWeight.Bold)
-            Row(Modifier.fillMaxWidth().background(Panel,RoundedCornerShape(12.dp)).padding(4.dp)) {
-                listOf(AspectRatioFrameLayout.RESIZE_MODE_FIT to "Fit",AspectRatioFrameLayout.RESIZE_MODE_FILL to "Fill",AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Crop").forEach{(m,t)->
-                    Surface(onClick={resizeMode=m;playerView?.resizeMode=m;playerPreferences.edit().putInt("resize_mode",m).apply()},modifier=Modifier.weight(1f).height(40.dp),shape=RoundedCornerShape(9.dp),color=if(resizeMode==m) Color(0xFF334253) else Color.Transparent){Box(contentAlignment=Alignment.Center){Text(t,color=Color.White)}}
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("PLAYBACK SPEED", color = secondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
+                            Surface(
+                                onClick = {
+                                    playbackSpeed = speed
+                                    player?.setPlaybackSpeed(speed)
+                                    playerPreferences.edit().putFloat("playback_speed", speed).apply()
+                                },
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                shape = RoundedCornerShape(13.dp),
+                                color = if (playbackSpeed == speed) Color(0xFF8DD8FF) else cardSurface,
+                                border = if (playbackSpeed == speed) null else androidx.compose.foundation.BorderStroke(1.dp, secondaryText.copy(alpha = 0.18f))
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(if (speed == 1f) "1×" else "${speed}×",
+                                        color = if (playbackSpeed == speed) Color(0xFF102033) else primaryText,
+                                        fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("SCREEN FRAMING", color = secondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    Row(Modifier.fillMaxWidth().background(cardSurface, RoundedCornerShape(16.dp)).padding(5.dp)) {
+                        listOf(
+                            AspectRatioFrameLayout.RESIZE_MODE_FIT to "Fit",
+                            AspectRatioFrameLayout.RESIZE_MODE_FILL to "Fill",
+                            AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Crop"
+                        ).forEach { (mode, label) ->
+                            Surface(
+                                onClick = {
+                                    resizeMode = mode
+                                    playerView?.resizeMode = mode
+                                    playerPreferences.edit().putInt("resize_mode", mode).apply()
+                                },
+                                modifier = Modifier.weight(1f).height(43.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (resizeMode == mode) Color(0xFF263D56) else Color.Transparent
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(label, color = if (resizeMode == mode) Color(0xFF8DD8FF) else primaryText,
+                                        fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                Surface(
+                    color = cardSurface, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(Modifier.size(40.dp).clip(RoundedCornerShape(13.dp)).background(if (dark) Color(0xFF223750) else Color(0xFFE8F4FF)),
+                            contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Replay10, contentDescription = null, tint = Color(0xFF45B8FF))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Repeat video", color = primaryText, fontWeight = FontWeight.SemiBold)
+                            Text("Loop the current video", color = secondaryText, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = player?.repeatMode == Player.REPEAT_MODE_ONE,
+                            onCheckedChange = {
+                                player?.repeatMode = if (it) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                                playerPreferences.edit().putBoolean("repeat_video", it).apply()
+                            }
+                        )
+                    }
+                }
+                Text("SOUND & CAPTIONS", color = secondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                SettingsActionRow(
+                    title = "Audio track",
+                    subtitle = "Choose the soundtrack or language",
+                    icon = Icons.Default.GraphicEq,
+                    dark = dark
+                ) { settingsOpen = false; trackDialog = 1 }
+                SettingsActionRow(
+                    title = "Subtitles",
+                    subtitle = "Select embedded captions",
+                    icon = Icons.Default.Subtitles,
+                    dark = dark
+                ) { settingsOpen = false; trackDialog = 2 }
+                SettingsActionRow(
+                    title = "Load subtitle file",
+                    subtitle = "Add an SRT or WebVTT file",
+                    icon = Icons.Default.FolderOpen,
+                    dark = dark
+                ) {
+                    settingsOpen = false
+                    subtitlePicker.launch(arrayOf("text/*", "application/x-subrip", "application/ttml+xml"))
                 }
             }
-            Row(verticalAlignment=Alignment.CenterVertically){Text("Repeat video",color=Color.White,modifier=Modifier.weight(1f));Switch(checked=player?.repeatMode==Player.REPEAT_MODE_ONE,onCheckedChange={player?.repeatMode=if(it)Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF;playerPreferences.edit().putBoolean("repeat_video",it).apply()})}
-            OutlinedButton(onClick={settingsOpen=false;trackDialog=1},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.GraphicEq,null);Spacer(Modifier.width(8.dp));Text("Audio track")}
-            OutlinedButton(onClick={settingsOpen=false;trackDialog=2},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Subtitles,null);Spacer(Modifier.width(8.dp));Text("Subtitles")}
-            OutlinedButton(onClick={settingsOpen=false;subtitlePicker.launch(arrayOf("text/*","application/x-subrip","application/ttml+xml"))},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.FolderOpen,null);Spacer(Modifier.width(8.dp));Text("Load subtitle file")}
         }
     }
 
@@ -1174,6 +1318,36 @@ private fun UPlayHome(
     }
 }
 
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    dark: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = if (dark) Color(0xFF172235) else Color.White,
+        shape = RoundedCornerShape(17.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (dark) Color(0xFF293A50) else Color(0xFFDCE7F3)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp))
+                .background(if (dark) Color(0xFF223750) else Color(0xFFE8F4FF)), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = Color(0xFF39AFFF), modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, color = if (dark) Color.White else Color(0xFF101725), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(subtitle, color = if (dark) Color(0xFF9BA9BC) else Color(0xFF68758A), fontSize = 11.sp)
+            }
+            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF39AFFF), modifier = Modifier.size(20.dp))
+        }
+    }
+}
 
 @Composable
 private fun AudioBar(index: Int) {
