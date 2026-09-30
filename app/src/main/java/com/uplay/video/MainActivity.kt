@@ -3,6 +3,7 @@ package com.uplay.video
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.res.Configuration
 import android.content.Intent
 import android.provider.OpenableColumns
 import android.net.Uri
@@ -50,6 +51,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.C
@@ -148,6 +151,9 @@ private fun UPlayHome(
     var playbackPosition by remember { mutableLongStateOf(0L) }
     var playbackDuration by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current
+    var originalSystemUiFlags by remember { mutableIntStateOf(0) }
+    var currentTab by remember { mutableStateOf(0) }
+    var controlsVisible by remember { mutableStateOf(true) }
     LaunchedEffect(incomingSharedUrl) {
         val sharedUrl = incomingSharedUrl ?: return@LaunchedEffect
         url = sharedUrl
@@ -156,10 +162,7 @@ private fun UPlayHome(
         message = sharedLinkMessage(sharedUrl)
         onSharedUrlConsumed()
     }
-    var originalSystemUiFlags by remember { mutableIntStateOf(0) }
-    var currentTab by remember { mutableStateOf(0) }
     val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
-    var controlsVisible by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var trackDialog by remember { mutableStateOf(0) } // 1 = audio, 2 = subtitles
@@ -314,11 +317,18 @@ private fun UPlayHome(
         }
     }
 
+    val configuration = LocalConfiguration.current
+    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Surface(modifier = Modifier.fillMaxSize(), color = Ink) {
         Scaffold(
             containerColor = Ink,
             bottomBar = {
-                NavigationBar(containerColor = Color(0xFF0E1420), contentColor = Color.White) {
+                NavigationBar(
+                    containerColor = Color(0xFF0B101B),
+                    contentColor = Color.White,
+                    tonalElevation = 0.dp
+                ) {
                     NavigationBarItem(
                         selected = currentTab == 0,
                         onClick = { currentTab = 0 },
@@ -326,7 +336,7 @@ private fun UPlayHome(
                         label = { Text("Player") },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Green, selectedTextColor = Green,
-                            indicatorColor = Color(0xFF17352B), unselectedIconColor = Muted,
+                            indicatorColor = Color(0xFF123A2C), unselectedIconColor = Muted,
                             unselectedTextColor = Muted
                         )
                     )
@@ -337,7 +347,7 @@ private fun UPlayHome(
                         label = { Text("Library") },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Green, selectedTextColor = Green,
-                            indicatorColor = Color(0xFF17352B), unselectedIconColor = Muted,
+                            indicatorColor = Color(0xFF123A2C), unselectedIconColor = Muted,
                             unselectedTextColor = Muted
                         )
                     )
@@ -345,225 +355,244 @@ private fun UPlayHome(
             }
         ) { insets ->
             if (currentTab == 0) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(insets),
-                    contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                Column(
+                    modifier = Modifier.fillMaxSize()
+                        .padding(insets)
+                        .padding(horizontal = if (landscape) 6.dp else 14.dp, vertical = if (landscape) 4.dp else 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (landscape) 5.dp else 10.dp)
                 ) {
-                    item {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    if (!landscape) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Image(
                                 painter = painterResource(id = R.drawable.uplay_launcher),
                                 contentDescription = "UPlay logo",
-                                modifier = Modifier.size(48.dp)
+                                modifier = Modifier.size(38.dp)
                             )
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("UPlay", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                                Text("YOUR VIDEO SPACE", fontSize = 10.sp, letterSpacing = 2.sp, color = Green)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Text("UPlay", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                                Text("YOUR VIDEO SPACE", fontSize = 9.sp, letterSpacing = 1.8.sp, color = Green)
                             }
                             Surface(color = Color(0xFF12372B), shape = RoundedCornerShape(50)) {
-                                Text("PLAYER", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                Text("PLAYER", modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                     color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Every video. One place.", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text("A clean, focused player for your library.", fontSize = 14.sp, color = Muted)
-                        }
-                    }
-                    item {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                                .background(Color.Black, RoundedCornerShape(20.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (selected && player != null && !fullScreen) {
-                                AndroidView(
-                                    factory = { context ->
-                                        PlayerView(context).apply {
-                                            this.player = player
-                                            useController = false
-                                            this.resizeMode = resizeMode
-                                            keepScreenOn = true
-                                            setShutterBackgroundColor(android.graphics.Color.BLACK)
-                                            playerView = this
-                                        }
-                                    },
-                                    update = {
-                                        it.player = player
-                                        it.resizeMode = resizeMode
-                                        playerView = it
-                                    },
-                                    modifier = Modifier.fillMaxSize()
-                                        .pointerInput(locked) {
-                                            detectTapGestures(
-                                                onTap = {
-                                                    if (locked) controlsVisible = true
-                                                    else controlsVisible = !controlsVisible
-                                                },
-                                                onDoubleTap = { point ->
-                                                    if (!locked) {
-                                                        val delta = if (point.x < size.width / 2f) -10_000L else 10_000L
-                                                        player?.seekTo((player.currentPosition + delta).coerceAtLeast(0L))
-                                                        controlsVisible = true
-                                                    }
-                                                }
-                                            )
-                                        }
-                                        .pointerInput(locked) {
-                                            detectTransformGestures { _, _, zoom, _ ->
+
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                            .clip(RoundedCornerShape(if (landscape) 8.dp else 22.dp))
+                            .background(Color.Black)
+                    ) {
+                        if (selected && player != null && player.currentMediaItem != null) {
+                            AndroidView(
+                                factory = { viewContext ->
+                                    PlayerView(viewContext).apply {
+                                        this.player = player
+                                        useController = false
+                                        this.resizeMode = resizeMode
+                                        keepScreenOn = true
+                                        setShutterBackgroundColor(android.graphics.Color.BLACK)
+                                        playerView = this
+                                    }
+                                },
+                                update = {
+                                    it.player = player
+                                    it.resizeMode = resizeMode
+                                    it.keepScreenOn = true
+                                    playerView = it
+                                },
+                                modifier = Modifier.fillMaxSize()
+                                    .pointerInput(locked) {
+                                        detectTapGestures(
+                                            onTap = { if (!locked) controlsVisible = !controlsVisible },
+                                            onDoubleTap = { point ->
                                                 if (!locked) {
-                                                    if (zoom > 1.08f) {
-                                                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                                                        playerView?.resizeMode = resizeMode
-                                                    } else if (zoom < 0.92f) {
-                                                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                                        playerView?.resizeMode = resizeMode
-                                                    }
+                                                    val delta = if (point.x < size.width / 2f) -10_000L else 10_000L
+                                                    player.seekTo((player.currentPosition + delta).coerceAtLeast(0L))
                                                     controlsVisible = true
                                                 }
+                                            }
+                                        )
+                                    }
+                                    .pointerInput(locked) {
+                                        detectTransformGestures { _, _, zoom, _ ->
+                                            if (!locked) {
+                                                if (zoom > 1.08f) resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                                else if (zoom < 0.92f) resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                                playerView?.resizeMode = resizeMode
+                                                playerPreferences.edit().putInt("resize_mode", resizeMode).apply()
+                                                controlsVisible = true
                                             }
                                         }
-                                )
-                                if (controlsVisible) {
-                                    Box(Modifier.fillMaxSize().background(Color(0x66060A10))) {
-                                        if (locked) {
-                                            IconButton(
-                                                onClick = { locked = false; controlsVisible = true },
-                                                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
-                                                    .background(Color(0xAA101722), RoundedCornerShape(50))
-                                            ) { Icon(Icons.Default.LockOpen, "Unlock controls", tint = Green) }
-                                        } else {
-                                            Row(
-                                                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                IconButton(onClick = { settingsOpen = true }) {
-                                                    Icon(Icons.Default.Settings, "Player settings", tint = Color.White)
-                                                }
-                                                IconButton(onClick = { locked = true; controlsVisible = true }) {
-                                                    Icon(Icons.Default.Lock, "Lock controls", tint = Color.White)
-                                                }
+                                    }
+                            )
+                            if (controlsVisible) {
+                                Box(Modifier.fillMaxSize().background(Color(0x55000000))) {
+                                    if (locked) {
+                                        IconButton(
+                                            onClick = { locked = false; controlsVisible = true },
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                                                .background(Color(0x990B101B), RoundedCornerShape(50))
+                                        ) { Icon(Icons.Default.LockOpen, "Unlock controls", tint = Green) }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            IconButton(onClick = { settingsOpen = true }) {
+                                                Icon(Icons.Default.Settings, "Player settings", tint = Color.White)
                                             }
-                                            Row(
-                                                modifier = Modifier.align(Alignment.Center),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(22.dp)
-                                            ) {
-                                                IconButton(onClick = {
-                                                    player?.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
-                                                    controlsVisible = true
-                                                }) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(34.dp)) }
-                                                IconButton(onClick = {
-                                                    if (player?.isPlaying == true) player.pause() else player?.play()
-                                                    controlsVisible = true
-                                                }) {
-                                                    Icon(
-                                                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                        if (isPlaying) "Pause" else "Play",
-                                                        tint = Green, modifier = Modifier.size(48.dp)
-                                                    )
-                                                }
-                                                IconButton(onClick = {
-                                                    player?.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L))
-                                                    controlsVisible = true
-                                                }) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                                            IconButton(onClick = { locked = true; controlsVisible = true }) {
+                                                Icon(Icons.Default.Lock, "Lock controls", tint = Color.White)
                                             }
-                                            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                                val duration = (player?.duration ?: 0L).coerceAtLeast(0L)
-                                                val position = (player?.currentPosition ?: 0L).coerceIn(0L, duration.coerceAtLeast(1L))
-                                                Slider(
-                                                    value = if (duration > 0) position.toFloat() / duration else 0f,
-                                                    onValueChange = { fraction ->
-                                                        if (duration > 0) player?.seekTo((duration * fraction).toLong())
-                                                    },
-                                                    colors = SliderDefaults.colors(thumbColor = Green, activeTrackColor = Green)
+                                        }
+                                        Row(
+                                            modifier = Modifier.align(Alignment.Center),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(20.dp)
+                                        ) {
+                                            IconButton(onClick = {
+                                                player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                                controlsVisible = true
+                                            }) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                                            IconButton(onClick = {
+                                                if (player.isPlaying) player.pause() else player.play()
+                                                controlsVisible = true
+                                            }) {
+                                                Icon(
+                                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                    if (isPlaying) "Pause" else "Play",
+                                                    tint = Green, modifier = Modifier.size(50.dp)
                                                 )
-                                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                    Text(formatTime(position), color = Color.White, fontSize = 11.sp)
-                                                    Text(formatTime(duration), color = Color.White, fontSize = 11.sp)
-                                                    IconButton(onClick = { fullScreen = true; controlsVisible = true }, modifier = Modifier.size(30.dp)) {
-                                                        Icon(Icons.Default.Fullscreen, "Enter full screen", tint = Color.White)
-                                                    }
-                                                }
+                                            }
+                                            IconButton(onClick = {
+                                                player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L))
+                                                controlsVisible = true
+                                            }) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                                        }
+                                        Column(
+                                            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            val duration = (player.duration).takeIf { it > 0L } ?: 0L
+                                            val position = player.currentPosition.coerceIn(0L, duration.coerceAtLeast(1L))
+                                            Slider(
+                                                value = if (duration > 0L) position.toFloat() / duration else 0f,
+                                                onValueChange = { fraction ->
+                                                    if (duration > 0L) player.seekTo((duration * fraction).toLong())
+                                                },
+                                                modifier = Modifier.fillMaxWidth().height(24.dp),
+                                                colors = SliderDefaults.colors(
+                                                    thumbColor = Green,
+                                                    activeTrackColor = Green,
+                                                    inactiveTrackColor = Color(0xFF5A6270),
+                                                    activeTickColor = Color.Transparent,
+                                                    inactiveTickColor = Color.Transparent
+                                                )
+                                            )
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(formatTime(position), color = Color.White, fontSize = 11.sp)
+                                                Text(formatTime(duration), color = Color.White, fontSize = 11.sp)
+                                                IconButton(
+                                                    onClick = { fullScreen = true; controlsVisible = true },
+                                                    modifier = Modifier.size(32.dp)
+                                                ) { Icon(Icons.Default.Fullscreen, "Enter full screen", tint = Color.White) }
                                             }
                                         }
                                     }
                                 }
-                            } else {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Blue, modifier = Modifier.size(42.dp))
-                                    Text("Ready when you are", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-                                    Text("Your next watch starts here", color = Muted, fontSize = 13.sp)
+                            }
+                        } else {
+                            Column(
+                                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(color = Color(0xFF111B29), shape = RoundedCornerShape(24.dp)) {
+                                    Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Green,
+                                        modifier = Modifier.padding(18.dp).size(42.dp))
                                 }
+                                Text("Ready when you are", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                Text("Open a video or add a supported direct link.", color = Muted, fontSize = 13.sp)
                             }
                         }
                     }
-                    item {
-                        Button(
-                            onClick = { picker.launch(arrayOf("video/*")) },
-                            modifier = Modifier.fillMaxWidth().height(54.dp),
-                            shape = RoundedCornerShape(15.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Blue)
-                        ) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
-                            Text("Open a video", fontWeight = FontWeight.Bold)
+
+                    if (!landscape) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                            Button(
+                                onClick = { picker.launch(arrayOf("video/*")) },
+                                modifier = Modifier.weight(0.9f).height(48.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                            ) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null)
+                                Spacer(Modifier.width(7.dp))
+                                Text("Open video", fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    val candidate = url.trim()
+                                    val parsed = runCatching { Uri.parse(candidate) }.getOrNull()
+                                    val validUrl = parsed != null &&
+                                        (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
+                                        !parsed.host.isNullOrBlank()
+                                    if (validUrl) {
+                                        onPlayUrl(candidate)
+                                        selected = true
+                                        controlsVisible = true
+                                        playbackError = null
+                                        val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                        recentVideos.removeAll { it.uri == candidate }
+                                        recentVideos.add(0, entry)
+                                        while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                                        saveRecentVideos(context, recentVideos)
+                                        message = "Loading video link…"
+                                    } else message = "Enter a valid HTTP(S) link first."
+                                },
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Green)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(Modifier.width(5.dp))
+                                Text("Play link", fontWeight = FontWeight.Bold)
+                            }
                         }
-                    }
-                    item {
                         OutlinedTextField(
                             value = url,
                             onValueChange = { url = it },
                             modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("Paste direct video URL", color = Muted) },
+                            placeholder = { Text("Paste a direct video URL or shared link", color = Muted) },
                             leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = Green) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            shape = RoundedCornerShape(15.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF334154),
                                 focusedTextColor = Color.White, unfocusedTextColor = Color.White
                             )
                         )
-                    }
-                    item {
-                        OutlinedButton(
-                            onClick = {
-                                val candidate = url.trim()
-                                val parsed = runCatching { Uri.parse(candidate) }.getOrNull()
-                                val validDirectUrl = parsed != null &&
-                                    (parsed.scheme.equals("https", ignoreCase = true) || parsed.scheme.equals("http", ignoreCase = true)) &&
-                                    !parsed.host.isNullOrBlank()
-                                if (validDirectUrl) {
-                                    onPlayUrl(candidate)
-                                    selected = true
-                                    controlsVisible = true
-                                    val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
-                                    recentVideos.removeAll { it.uri == candidate }
-                                    recentVideos.add(0, entry)
-                                    while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
-                                    saveRecentVideos(context, recentVideos)
-                                    message = "Loading video link…"
-                                } else message = "Please enter a valid direct HTTP(S) video URL."
-                            },
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(15.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Green)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Play link", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(message, color = if (playbackError != null) Color(0xFFFFB4AB) else Muted, fontSize = 12.sp)
+                        if (message.isNotBlank()) {
+                            Text(
+                                text = playbackError ?: message,
+                                color = if (playbackError != null) Color(0xFFFFB4AB) else Muted,
+                                fontSize = 12.sp,
+                                maxLines = 2,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             if (playbackError != null) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Button(onClick = {
                                         playbackError = null
                                         runCatching {
@@ -577,12 +606,12 @@ private fun UPlayHome(
                                             playbackError = "Retry couldn't start. Try reopening the video."
                                             message = playbackError ?: message
                                         }
-                                    }) { Text("Retry playback") }
+                                    }) { Text("Retry") }
                                     TextButton(onClick = {
                                         playbackError = null
                                         selected = false
                                         player?.stop()
-                                        message = "Playback stopped. Choose another video or URL."
+                                        message = "Playback stopped."
                                     }) { Text("Dismiss", color = Muted) }
                                 }
                             }
@@ -590,96 +619,51 @@ private fun UPlayHome(
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(insets),
-                    contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 28.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("Your library", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text("Pick up where you left off.", color = Muted)
-                        }
-                    }
-                    item {
-                        Surface(
-                            color = Panel,
-                            shape = RoundedCornerShape(20.dp),
-                            modifier = Modifier.fillMaxWidth().animateContentSize()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Surface(color = Color(0xFF1A2B40), shape = RoundedCornerShape(14.dp)) {
-                                    Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Green, modifier = Modifier.padding(13.dp).size(28.dp))
-                                }
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("Recently played", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                    Text("Up to 30 videos, with saved progress", color = Muted, fontSize = 12.sp)
-                                }
-                                Button(onClick = { picker.launch(arrayOf("video/*")) }) { Text("Add") }
-                            }
-                        }
-                    }
+                Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text("Your library", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("Pick up where you left off.", color = Muted, fontSize = 14.sp)
+                    Spacer(Modifier.height(14.dp))
                     if (recentVideos.isEmpty()) {
-                        item {
-                            AnimatedVisibility(visible = true, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-                                Surface(color = Color(0xFF0D131E), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 34.dp, horizontal = 22.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Muted, modifier = Modifier.size(42.dp))
-                                        Text("Your next watch starts here", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                        Text("Open a video and it will appear here for quick access.", color = Muted, fontSize = 13.sp)
-                                        Button(onClick = { picker.launch(arrayOf("video/*")) }) { Text("Browse videos") }
-                                    }
-                                }
+                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Muted, modifier = Modifier.size(42.dp))
+                                Text("Your library is empty", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("Open a video to add it here.", color = Muted)
+                                Button(onClick = { picker.launch(arrayOf("video/*")) }) { Text("Browse videos") }
                             }
                         }
                     } else {
-                        items(recentVideos, key = { it.uri }) { entry ->
-                            Surface(
-                                color = Panel,
-                                shape = RoundedCornerShape(18.dp),
-                                modifier = Modifier.fillMaxWidth().animateContentSize()
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Surface(color = Color(0xFF1B2D43), shape = RoundedCornerShape(13.dp)) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Green, modifier = Modifier.padding(13.dp).size(24.dp))
-                                    }
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(entry.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                                        Text(
-                                            if (entry.positionMs > 0L) "Resume at ${formatTime(entry.positionMs)}" else if (entry.remote) "Direct video link" else "Local video",
-                                            color = Muted, fontSize = 12.sp
-                                        )
-                                        if (entry.positionMs > 0L) {
-                                            LinearProgressIndicator(
-                                                progress = { if (playbackDuration > 0L && entry.uri == player?.currentMediaItem?.localConfiguration?.uri?.toString()) (playbackPosition.toFloat() / playbackDuration).coerceIn(0f, 1f) else 0.12f },
-                                                modifier = Modifier.fillMaxWidth().height(3.dp),
-                                                color = Green,
-                                                trackColor = Color(0xFF293445)
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
+                            items(recentVideos, key = { it.uri }) { entry ->
+                                Surface(color = Panel, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Surface(color = Color(0xFF1B2D43), shape = RoundedCornerShape(12.dp)) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Green,
+                                                modifier = Modifier.padding(12.dp).size(26.dp))
+                                        }
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text(entry.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                            Text(
+                                                if (entry.positionMs > 0L) "Resume at ${formatTime(entry.positionMs)}" else if (entry.remote) "Direct media link" else "Local video",
+                                                color = Muted, fontSize = 12.sp
                                             )
                                         }
+                                        IconButton(onClick = {
+                                            runCatching {
+                                                if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
+                                                player?.seekTo(entry.positionMs)
+                                                selected = true
+                                                currentTab = 0
+                                                controlsVisible = true
+                                                playbackError = null
+                                                message = "Resuming ${entry.title}…"
+                                            }.onFailure { message = "Couldn't reopen this video." }
+                                        }) { Icon(Icons.Default.PlayArrow, "Play ${entry.title}", tint = Green, modifier = Modifier.size(30.dp)) }
                                     }
-                                    IconButton(onClick = {
-                                        runCatching {
-                                            if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
-                                            player?.seekTo(entry.positionMs)
-                                            selected = true
-                                            currentTab = 0
-                                            controlsVisible = true
-                                            message = "Resuming ${entry.title}…"
-                                        }.onFailure { message = "Couldn't reopen this video. It may have been moved or removed." }
-                                    }) { Icon(Icons.Default.PlayArrow, contentDescription = "Play ${entry.title}", tint = Green, modifier = Modifier.size(30.dp)) }
                                 }
                             }
                         }
