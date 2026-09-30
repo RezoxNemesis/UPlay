@@ -714,20 +714,31 @@ private fun UPlayHome(
                                                 enter = scaleIn(initialScale = 0.45f) + fadeIn(),
                                                 exit = scaleOut(targetScale = 0.45f) + fadeOut()
                                             ) {
-                                                Column(
-                                                    verticalArrangement = Arrangement.spacedBy(9.dp),
-                                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                                    modifier = Modifier.padding(bottom = 48.dp).graphicsLayer {
-                                                        rotationZ = if (radialOpen) 0f else -28f
-                                                    }
+                                                val radialRotation by animateFloatAsState(
+                                                    targetValue = if (radialOpen) 360f else 0f,
+                                                    animationSpec = tween(520, easing = FastOutSlowInEasing),
+                                                    label = "radial-controls-rotation"
+                                                )
+                                                Box(
+                                                    Modifier.size(148.dp).padding(bottom = 42.dp)
+                                                        .graphicsLayer { rotationZ = radialRotation }
                                                 ) {
-                                                    RadialControl(Icons.Default.Subtitles, "Subtitles") {
+                                                    RadialControl(
+                                                        Icons.Default.Subtitles, "Subtitles",
+                                                        modifier = Modifier.align(Alignment.TopCenter).offset(y = 4.dp)
+                                                    ) {
                                                         radialOpen = false; trackDialog = 2
                                                     }
-                                                    RadialControl(Icons.Default.GraphicEq, "Audio") {
+                                                    RadialControl(
+                                                        Icons.Default.GraphicEq, "Audio",
+                                                        modifier = Modifier.align(Alignment.CenterStart).offset(x = 8.dp, y = 4.dp)
+                                                    ) {
                                                         radialOpen = false; trackDialog = 1
                                                     }
-                                                    RadialControl(Icons.Default.FitScreen, "Screen fit") {
+                                                    RadialControl(
+                                                        Icons.Default.FitScreen, "Screen fit",
+                                                        modifier = Modifier.align(Alignment.TopEnd).offset(x = (-5).dp, y = 24.dp)
+                                                    ) {
                                                         radialOpen = false; settingsOpen = true
                                                     }
                                                 }
@@ -1506,12 +1517,17 @@ private fun AudioBar(index: Int) {
 private fun RadialControl(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick, shape = CircleShape, color = Color(0xEE111A29),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x668DD8FF)),
-        modifier = Modifier.size(44.dp)
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xAA8DD8FF)),
+        modifier = modifier.size(44.dp).graphicsLayer {
+            shadowElevation = 10.dp.toPx()
+            shape = CircleShape
+            clip = false
+        }
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = label, tint = Color(0xFF8DD8FF), modifier = Modifier.size(21.dp))
