@@ -3,6 +3,10 @@ package com.uplay.video
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.graphics.Bitmap
+import android.os.Build
+import android.os.CancellationSignal
+import android.util.Size
 import android.content.res.Configuration
 import android.content.Intent
 import android.provider.OpenableColumns
@@ -63,6 +67,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
@@ -88,7 +94,9 @@ import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -98,7 +106,15 @@ private val Blue = Color(0xFF087BFF)
 private val Green = Color(0xFF35E889)
 private val Muted = Color(0xFF9BA9BC)
 
-private data class RecentVideo(val uri: String, val title: String, val positionMs: Long, val remote: Boolean)
+private data class RecentVideo(
+    val uri: String,
+    val title: String,
+    val positionMs: Long,
+    val remote: Boolean,
+    val sizeBytes: Long = 0L,
+    val location: String = "",
+    val durationMs: Long = 0L
+)
 
 class MainActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
@@ -185,6 +201,7 @@ private fun UPlayHome(
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) } // Home, Player, Library
+    var libraryMode by remember { mutableIntStateOf(0) } // Videos, Music
     var controlsVisible by remember { mutableStateOf(true) }
     LaunchedEffect(incomingSharedUrl) {
         val sharedUrl = incomingSharedUrl ?: return@LaunchedEffect
@@ -246,16 +263,17 @@ private fun UPlayHome(
         onDispose { player?.removeListener(listener) }
     }
 
-    LaunchedEffect(player, selected, isPlaying, recentVideos.size) {
+    LaunchedEffect(player, selected, isPlaying, isMusicMode, recentVideos.size, recentAudios.size) {
         while (selected && player != null) {
             playbackPosition = player.currentPosition.coerceAtLeast(0L)
             playbackDuration = player.duration.takeIf { it > 0L } ?: 0L
             val activeUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
             if (activeUri != null && playbackPosition > 0L) {
-                val index = recentVideos.indexOfFirst { it.uri == activeUri }
+                val history = if (isMusicMode) recentAudios else recentVideos
+                val index = history.indexOfFirst { it.uri == activeUri }
                 if (index >= 0) {
-                    recentVideos[index] = recentVideos[index].copy(positionMs = playbackPosition)
-                    saveRecentVideos(context, recentVideos)
+                    history[index] = history[index].copy(positionMs = playbackPosition, durationMs = playbackDuration)
+                    saveRecentVideos(context, history, if (isMusicMode) "recent_audio" else "recent_videos")
                 }
             }
             delay(2500)
@@ -339,7 +357,8 @@ private fun UPlayHome(
                 player?.playWhenReady = true
                 val title = queryDisplayName(context, uri)
                 val previous = recentAudios.firstOrNull { it.uri == uri.toString() }
-                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false)
+                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false,
+                    sizeBytes = queryFileSize(context, uri), location = uri.toString(), durationMs = previous?.durationMs ?: 0L)
                 recentAudios.removeAll { it.uri == entry.uri }
                 recentAudios.add(0, entry)
                 while (recentAudios.size > 50) recentAudios.removeAt(recentAudios.lastIndex)
@@ -362,7 +381,8 @@ private fun UPlayHome(
                 isMusicMode = false
                 val title = queryDisplayName(context, uri)
                 val previous = recentVideos.firstOrNull { it.uri == uri.toString() }
-                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false)
+                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false,
+                    sizeBytes = queryFileSize(context, uri), location = uri.toString(), durationMs = previous?.durationMs ?: 0L)
                 recentVideos.removeAll { it.uri == entry.uri }
                 recentVideos.add(0, entry)
                 while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
@@ -730,50 +750,92 @@ private fun UPlayHome(
                     }
                 }
             } else if (currentTab == 2) {
-                Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text("Your library", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text("Pick up where you left off.", color = Muted, fontSize = 14.sp)
-                    Spacer(Modifier.height(14.dp))
-                    if (recentVideos.isEmpty()) {
+                val dark = isSystemInDarkTheme()
+                val foreground = if (dark) Color(0xFFF7FAFF) else Color(0xFF101725)
+                val secondaryText = if (dark) Color(0xFF9BA9BC) else Color(0xFF68758A)
+                val cardSurface = if (dark) Panel else Color.White
+                val mediaItems = if (libraryMode == 0) recentVideos else recentAudios
+                Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 18.dp, vertical = 14.dp)) {
+                    Text("Your library", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = foreground)
+                    Text("History, progress and file details in one place.", color = secondaryText, fontSize = 13.sp)
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                            .background(if (dark) Color(0xFF101827) else Color(0xFFE8EEF6)).padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf("Videos", "Music").forEachIndexed { index, label ->
+                            Surface(
+                                onClick = { libraryMode = index },
+                                color = if (libraryMode == index) Color(0xFF8DD8FF) else Color.Transparent,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f).height(42.dp)
+                            ) {
+                                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(if (index == 0) Icons.Default.VideoLibrary else Icons.Default.GraphicEq,
+                                        contentDescription = null, tint = if (libraryMode == index) Color(0xFF102033) else secondaryText,
+                                        modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(7.dp))
+                                    Text(label, color = if (libraryMode == index) Color(0xFF102033) else secondaryText, fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.width(5.dp))
+                                    Text((if (index == 0) recentVideos.size else recentAudios.size).toString(),
+                                        color = if (libraryMode == index) Color(0xFF102033) else secondaryText, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    if (mediaItems.isEmpty()) {
                         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Muted, modifier = Modifier.size(42.dp))
-                                Text("Your library is empty", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                Text("Open a video to add it here.", color = Muted)
-                                Button(onClick = { picker.launch(arrayOf("video/*")) }) { Text("Browse videos") }
+                                Icon(if (libraryMode == 0) Icons.Default.VideoLibrary else Icons.Default.GraphicEq,
+                                    contentDescription = null, tint = Color(0xFF61BFFF), modifier = Modifier.size(46.dp))
+                                Text(if (libraryMode == 0) "No video history yet" else "No music history yet",
+                                    color = foreground, fontWeight = FontWeight.SemiBold)
+                                Text(if (libraryMode == 0) "Open a video to see its details here." else "Open an audio file to build your music history.",
+                                    color = secondaryText, fontSize = 13.sp)
+                                Button(onClick = { if (libraryMode == 0) picker.launch(arrayOf("video/*")) else audioPicker.launch(arrayOf("audio/*")) }) {
+                                    Text(if (libraryMode == 0) "Browse videos" else "Browse music")
+                                }
                             }
                         }
                     } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
-                            items(recentVideos, key = { it.uri }) { entry ->
-                                Surface(color = Panel, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.weight(1f)) {
+                            items(mediaItems, key = { it.uri }) { entry ->
+                                Surface(color = cardSurface, shape = RoundedCornerShape(19.dp), modifier = Modifier.fillMaxWidth()) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(12.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        Surface(color = Color(0xFF1B2D43), shape = RoundedCornerShape(12.dp)) {
-                                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Green,
-                                                modifier = Modifier.padding(12.dp).size(26.dp))
-                                        }
-                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            Text(entry.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                        MediaThumbnail(uri = entry.uri, title = entry.title, isMusic = libraryMode == 1, dark = dark)
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                            Text(entry.title, color = foreground, fontWeight = FontWeight.SemiBold, maxLines = 2)
                                             Text(
-                                                if (entry.positionMs > 0L) "Resume at ${formatTime(entry.positionMs)}" else if (entry.remote) "Direct media link" else "Local video",
-                                                color = Muted, fontSize = 12.sp
+                                                when {
+                                                    entry.durationMs > 0L && entry.positionMs > 0L ->
+                                                        "${((entry.positionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f) * 100).toInt()}% watched · Resume at ${formatTime(entry.positionMs)}"
+                                                    entry.remote -> "Online direct media"
+                                                    else -> "Local ${if (libraryMode == 0) "video" else "audio"}"
+                                                },
+                                                color = secondaryText, fontSize = 11.sp, maxLines = 2
                                             )
+                                            Text("${if (entry.sizeBytes > 0L) formatBytes(entry.sizeBytes) else "Size unavailable"} · ${if (entry.remote) "Internet" else "On device"}",
+                                                color = secondaryText, fontSize = 10.sp, maxLines = 1)
+                                            Text(entry.location.ifBlank { entry.uri }, color = secondaryText, fontSize = 9.sp, maxLines = 1)
                                         }
                                         IconButton(onClick = {
                                             runCatching {
                                                 if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
+                                                isMusicMode = libraryMode == 1
                                                 player?.seekTo(entry.positionMs)
                                                 selected = true
                                                 currentTab = 1
                                                 controlsVisible = true
                                                 playbackError = null
                                                 message = "Resuming ${entry.title}…"
-                                            }.onFailure { message = "Couldn't reopen this video." }
-                                        }) { Icon(Icons.Default.PlayArrow, "Play ${entry.title}", tint = Green, modifier = Modifier.size(30.dp)) }
+                                            }.onFailure { message = "Couldn't reopen this media file." }
+                                        }) { Icon(Icons.Default.PlayArrow, "Play ${entry.title}", tint = Color(0xFF2EAAFF), modifier = Modifier.size(29.dp)) }
                                     }
                                 }
                             }
@@ -1142,7 +1204,10 @@ private fun loadRecentVideos(context: Context, key: String = "recent_videos"): L
             uri = uri,
             title = item.optString("title", uri.substringAfterLast('/')),
             positionMs = item.optLong("positionMs", 0L).coerceAtLeast(0L),
-            remote = item.optBoolean("remote", false)
+            remote = item.optBoolean("remote", false),
+            sizeBytes = item.optLong("sizeBytes", 0L).coerceAtLeast(0L),
+            location = item.optString("location", uri),
+            durationMs = item.optLong("durationMs", 0L).coerceAtLeast(0L)
         )
     }.take(30)
 }.getOrDefault(emptyList())
@@ -1156,10 +1221,53 @@ private fun saveRecentVideos(context: Context, videos: List<RecentVideo>, key: S
                 put("title", video.title)
                 put("positionMs", video.positionMs)
                 put("remote", video.remote)
+                put("sizeBytes", video.sizeBytes)
+                put("location", video.location)
+                put("durationMs", video.durationMs)
             })
         }
         context.getSharedPreferences("uplay_library", Context.MODE_PRIVATE)
             .edit().putString(key, array.toString()).apply()
+    }
+}
+
+private fun queryFileSize(context: Context, uri: Uri): Long = runCatching {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else 0L
+    } ?: 0L
+}.getOrDefault(0L)
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L * 1024L -> "${"%.1f".format(bytes / (1024.0 * 1024.0 * 1024.0))} GB"
+    bytes >= 1024L * 1024L -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+    bytes >= 1024L -> "${"%.0f".format(bytes / 1024.0)} KB"
+    else -> "${bytes} B"
+}
+
+@Composable
+private fun MediaThumbnail(uri: String, title: String, isMusic: Boolean, dark: Boolean) {
+    val context = LocalContext.current
+    val bitmap by androidx.compose.runtime.produceState<Bitmap?>(initialValue = null, uri) {
+        value = withContext(Dispatchers.IO) {
+            if (Build.VERSION.SDK_INT >= 29 && uri.startsWith("content://") && !isMusic) {
+                runCatching {
+                    context.contentResolver.loadThumbnail(Uri.parse(uri), Size(320, 180), CancellationSignal())
+                }.getOrNull()
+            } else null
+        }
+    }
+    Box(
+        modifier = Modifier.size(width = 94.dp, height = 72.dp).clip(RoundedCornerShape(13.dp))
+            .background(if (dark) Color(0xFF1B2D43) else Color(0xFFE6F3FF)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(bitmap = bitmap!!.asImageBitmap(), contentDescription = title, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize())
+        } else {
+            Icon(if (isMusic) Icons.Default.GraphicEq else Icons.Default.PlayArrow, contentDescription = title,
+                tint = Color(0xFF39AFFF), modifier = Modifier.size(if (isMusic) 34.dp else 40.dp))
+        }
     }
 }
 
