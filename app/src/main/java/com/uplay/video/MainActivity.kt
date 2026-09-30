@@ -210,8 +210,15 @@ private fun UPlayHome(
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) } // Home, Player, Library
     var libraryMode by remember { mutableIntStateOf(0) } // Videos, Music
-    var libraryMode by remember { mutableIntStateOf(0) } // Videos, Music
     var controlsVisible by remember { mutableStateOf(true) }
+    val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
+    val recentAudios = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context, "recent_audio")) } }
+    val deviceVideos = remember { mutableStateListOf<RecentVideo>() }
+    val deviceAudios = remember { mutableStateListOf<RecentVideo>() }
+    var mediaPermissionGranted by remember { mutableStateOf(false) }
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        mediaPermissionGranted = results.values.any { it }
+    }
     LaunchedEffect(Unit) {
         val requiredPermissions = when {
             Build.VERSION.SDK_INT >= 34 -> arrayOf(
@@ -256,14 +263,6 @@ private fun UPlayHome(
         controlsVisible = true
         message = sharedLinkMessage(sharedUrl)
         onSharedUrlConsumed()
-    }
-    val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
-    val recentAudios = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context, "recent_audio")) } }
-    val deviceVideos = remember { mutableStateListOf<RecentVideo>() }
-    val deviceAudios = remember { mutableStateListOf<RecentVideo>() }
-    var mediaPermissionGranted by remember { mutableStateOf(false) }
-    val mediaPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        mediaPermissionGranted = results.values.any { it }
     }
     var locked by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -910,6 +909,7 @@ private fun UPlayHome(
                             }
                         }
                     }
+                }
                 }
             } else {
                 val dark = isSystemInDarkTheme()
