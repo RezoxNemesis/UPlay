@@ -22,6 +22,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -174,6 +175,7 @@ private fun UPlayHome(
     var url by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("Choose a video or paste a direct video URL to begin.") }
     var selected by remember { mutableStateOf(false) }
+    var isMusicMode by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
     var playbackPosition by remember { mutableLongStateOf(0L) }
     var playbackDuration by remember { mutableLongStateOf(0L) }
@@ -191,6 +193,7 @@ private fun UPlayHome(
         onSharedUrlConsumed()
     }
     val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
+    val recentAudios = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context, "recent_audio")) } }
     var locked by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var radialOpen by remember { mutableStateOf(false) }
@@ -325,11 +328,36 @@ private fun UPlayHome(
         }
     }
 
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                player?.setMediaItem(MediaItem.fromUri(uri))
+                player?.prepare()
+                player?.playWhenReady = true
+                val title = queryDisplayName(context, uri)
+                val previous = recentAudios.firstOrNull { it.uri == uri.toString() }
+                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false)
+                recentAudios.removeAll { it.uri == entry.uri }
+                recentAudios.add(0, entry)
+                while (recentAudios.size > 50) recentAudios.removeAt(recentAudios.lastIndex)
+                saveRecentVideos(context, recentAudios, "recent_audio")
+                player?.seekTo(entry.positionMs)
+                selected = true
+                isMusicMode = true
+                currentTab = 1
+                controlsVisible = true
+                message = "Playing audio: $title"
+            }.onFailure { message = "Couldn't open this audio file. Try another file." }
+        }
+    }
+
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
                 runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                 onLocalVideo(uri)
+                isMusicMode = false
                 val title = queryDisplayName(context, uri)
                 val previous = recentVideos.firstOrNull { it.uri == uri.toString() }
                 val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false)
@@ -392,7 +420,33 @@ private fun UPlayHome(
                             .background(Color.Black)
                     ) {
                         if (selected && player != null && player.currentMediaItem != null) {
-                            AndroidView(
+                            if (isMusicMode) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize()
+                                        .background(Brush.verticalGradient(listOf(Color(0xFF0B1728), Color.Black, Color(0xFF111D30))))
+                                        .pointerInput(locked) {
+                                            detectTapGestures(onTap = { if (!locked) controlsVisible = !controlsVisible })
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                                        Box(
+                                            modifier = Modifier.size(148.dp).clip(RoundedCornerShape(42.dp))
+                                                .background(Brush.linearGradient(listOf(Color(0xFF152E4B), Color(0xFF0D1727)))),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF8DD8FF), modifier = Modifier.size(72.dp))
+                                        }
+                                        Text(player.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty().ifBlank { "Now playing" },
+                                            color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Bottom,
+                                            modifier = Modifier.height(54.dp)) {
+                                            repeat(19) { index -> AudioBar(index = index) }
+                                        }
+                                        Text("MUSIC PLAYER", color = Color(0xFF8DD8FF), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.5.sp)
+                                    }
+                                }
+                            } else AndroidView(
                                 factory = { viewContext ->
                                     (LayoutInflater.from(viewContext).inflate(R.layout.uplay_player_texture_view, null, false) as PlayerView).apply {
                                         this.player = player
@@ -597,6 +651,7 @@ private fun UPlayHome(
                                     if (validUrl) {
                                         onPlayUrl(candidate)
                                         selected = true
+                                        isMusicMode = false
                                         controlsVisible = true
                                         playbackError = null
                                         val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
@@ -615,6 +670,16 @@ private fun UPlayHome(
                                 Spacer(Modifier.width(5.dp))
                                 Text("Play link", fontWeight = FontWeight.Bold)
                             }
+                        }
+                        OutlinedButton(
+                            onClick = { audioPicker.launch(arrayOf("audio/*")) },
+                            modifier = Modifier.fillMaxWidth().height(46.dp),
+                            shape = RoundedCornerShape(15.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
+                        ) {
+                            Icon(Icons.Default.GraphicEq, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Open music library")
                         }
                         OutlinedTextField(
                             value = url,
@@ -981,6 +1046,24 @@ private fun UPlayHome(
 
 
 @Composable
+private fun AudioBar(index: Int) {
+    val transition = rememberInfiniteTransition(label = "audio-bar-$index")
+    val height by transition.animateFloat(
+        initialValue = 9f + (index % 4) * 4f,
+        targetValue = 18f + ((index * 7) % 7) * 5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 380 + (index % 5) * 90, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "audio-height-$index"
+    )
+    Box(
+        modifier = Modifier.width(4.dp).height(height.dp).clip(RoundedCornerShape(4.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFFB5E9FF), Color(0xFF3BAEFF))))
+    )
+}
+
+@Composable
 private fun RadialControl(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
@@ -1050,8 +1133,8 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 
-private fun loadRecentVideos(context: Context): List<RecentVideo> = runCatching {
-    val raw = context.getSharedPreferences("uplay_library", Context.MODE_PRIVATE).getString("recent_videos", "[]") ?: "[]"
+private fun loadRecentVideos(context: Context, key: String = "recent_videos"): List<RecentVideo> = runCatching {
+    val raw = context.getSharedPreferences("uplay_library", Context.MODE_PRIVATE).getString(key, "[]") ?: "[]"
     val array = JSONArray(raw)
     (0 until array.length()).mapNotNull { index ->
         val item = array.optJSONObject(index) ?: return@mapNotNull null
@@ -1065,7 +1148,7 @@ private fun loadRecentVideos(context: Context): List<RecentVideo> = runCatching 
     }.take(30)
 }.getOrDefault(emptyList())
 
-private fun saveRecentVideos(context: Context, videos: List<RecentVideo>) {
+private fun saveRecentVideos(context: Context, videos: List<RecentVideo>, key: String = "recent_videos") {
     runCatching {
         val array = JSONArray()
         videos.take(30).forEach { video ->
@@ -1077,7 +1160,7 @@ private fun saveRecentVideos(context: Context, videos: List<RecentVideo>) {
             })
         }
         context.getSharedPreferences("uplay_library", Context.MODE_PRIVATE)
-            .edit().putString("recent_videos", array.toString()).apply()
+            .edit().putString(key, array.toString()).apply()
     }
 }
 
