@@ -3,6 +3,8 @@ package com.uplay.video
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.provider.OpenableColumns
 import android.net.Uri
 import android.view.View
 import android.os.Bundle
@@ -10,6 +12,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -20,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.animateContentSize
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
@@ -61,12 +69,16 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
 
 private val Ink = Color(0xFF090D15)
 private val Panel = Color(0xFF141C29)
 private val Blue = Color(0xFF087BFF)
 private val Green = Color(0xFF35E889)
 private val Muted = Color(0xFF9BA9BC)
+
+private data class RecentVideo(val uri: String, val title: String, val positionMs: Long, val remote: Boolean)
 
 class MainActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
@@ -121,6 +133,7 @@ private fun UPlayHome(
     val context = LocalContext.current
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
     var currentTab by remember { mutableStateOf(0) }
+    val recentVideos = remember(context) { mutableStateListOf<RecentVideo>().apply { addAll(loadRecentVideos(context)) } }
     var controlsVisible by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -146,11 +159,19 @@ private fun UPlayHome(
         onDispose { player?.removeListener(listener) }
     }
 
-    LaunchedEffect(player, selected, isPlaying) {
+    LaunchedEffect(player, selected, isPlaying, recentVideos.size) {
         while (selected && player != null) {
             playbackPosition = player.currentPosition.coerceAtLeast(0L)
             playbackDuration = player.duration.takeIf { it > 0L } ?: 0L
-            delay(500)
+            val activeUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
+            if (activeUri != null && playbackPosition > 0L) {
+                val index = recentVideos.indexOfFirst { it.uri == activeUri }
+                if (index >= 0) {
+                    recentVideos[index] = recentVideos[index].copy(positionMs = playbackPosition)
+                    saveRecentVideos(context, recentVideos)
+                }
+            }
+            delay(2500)
         }
     }
 
@@ -223,14 +244,23 @@ private fun UPlayHome(
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            runCatching { onLocalVideo(uri) }
-                .onSuccess {
-                    selected = true
-                    currentTab = 0
-                    controlsVisible = true
-                    message = "Loading selected video…"
-                }
-                .onFailure { message = "Couldn't open this video. Try another file." }
+            runCatching {
+                runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                onLocalVideo(uri)
+                val title = queryDisplayName(context, uri)
+                val previous = recentVideos.firstOrNull { it.uri == uri.toString() }
+                val entry = RecentVideo(uri.toString(), title, previous?.positionMs ?: 0L, false)
+                recentVideos.removeAll { it.uri == entry.uri }
+                recentVideos.add(0, entry)
+                while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                saveRecentVideos(context, recentVideos)
+                player?.seekTo(entry.positionMs)
+            }.onSuccess {
+                selected = true
+                currentTab = 0
+                controlsVisible = true
+                message = "Loading selected video…"
+            }.onFailure { message = "Couldn't open this video. Try another file." }
         }
     }
 
@@ -458,6 +488,11 @@ private fun UPlayHome(
                                     onPlayUrl(candidate)
                                     selected = true
                                     controlsVisible = true
+                                    val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                    recentVideos.removeAll { it.uri == candidate }
+                                    recentVideos.add(0, entry)
+                                    while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                                    saveRecentVideos(context, recentVideos)
                                     message = "Loading video link…"
                                 } else message = "Please enter a direct video URL."
                             },
@@ -475,26 +510,95 @@ private fun UPlayHome(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(insets),
-                    contentPadding = PaddingValues(20.dp),
+                    contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     item {
-                        Text("Your library", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Open local videos to start watching.", color = Muted)
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text("Your library", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Pick up where you left off.", color = Muted)
+                        }
                     }
                     item {
-                        Surface(color = Panel, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Green, modifier = Modifier.size(32.dp))
-                                Text(if (selected) "A video is ready in Player" else "No videos opened yet", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                Text("Choose a file from your device. UPlay will open it in the Player tab.", color = Muted)
-                                Button(onClick = { picker.launch(arrayOf("video/*")) }, modifier = Modifier.fillMaxWidth()) {
-                                    Icon(Icons.Default.FolderOpen, contentDescription = null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Browse videos")
+                        Surface(
+                            color = Panel,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.fillMaxWidth().animateContentSize()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(color = Color(0xFF1A2B40), shape = RoundedCornerShape(14.dp)) {
+                                    Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Green, modifier = Modifier.padding(13.dp).size(28.dp))
                                 }
-                                if (selected) TextButton(onClick = { currentTab = 0 }) { Text("Return to Player") }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Recently played", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                    Text("Up to 30 videos, with saved progress", color = Muted, fontSize = 12.sp)
+                                }
+                                Button(onClick = { picker.launch(arrayOf("video/*")) }) { Text("Add") }
+                            }
+                        }
+                    }
+                    if (recentVideos.isEmpty()) {
+                        item {
+                            AnimatedVisibility(visible = true, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                                Surface(color = Color(0xFF0D131E), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 34.dp, horizontal = 22.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Muted, modifier = Modifier.size(42.dp))
+                                        Text("Your next watch starts here", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                        Text("Open a video and it will appear here for quick access.", color = Muted, fontSize = 13.sp)
+                                        Button(onClick = { picker.launch(arrayOf("video/*")) }) { Text("Browse videos") }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        items(recentVideos, key = { it.uri }) { entry ->
+                            Surface(
+                                color = Panel,
+                                shape = RoundedCornerShape(18.dp),
+                                modifier = Modifier.fillMaxWidth().animateContentSize()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Surface(color = Color(0xFF1B2D43), shape = RoundedCornerShape(13.dp)) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Green, modifier = Modifier.padding(13.dp).size(24.dp))
+                                    }
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(entry.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                        Text(
+                                            if (entry.positionMs > 0L) "Resume at ${formatTime(entry.positionMs)}" else if (entry.remote) "Direct video link" else "Local video",
+                                            color = Muted, fontSize = 12.sp
+                                        )
+                                        if (entry.positionMs > 0L) {
+                                            LinearProgressIndicator(
+                                                progress = { if (playbackDuration > 0L && entry.uri == player?.currentMediaItem?.localConfiguration?.uri?.toString()) (playbackPosition.toFloat() / playbackDuration).coerceIn(0f, 1f) else 0.12f },
+                                                modifier = Modifier.fillMaxWidth().height(3.dp),
+                                                color = Green,
+                                                trackColor = Color(0xFF293445)
+                                            )
+                                        }
+                                    }
+                                    IconButton(onClick = {
+                                        runCatching {
+                                            if (entry.remote) onPlayUrl(entry.uri) else onLocalVideo(Uri.parse(entry.uri))
+                                            player?.seekTo(entry.positionMs)
+                                            selected = true
+                                            currentTab = 0
+                                            controlsVisible = true
+                                            message = "Resuming ${entry.title}…"
+                                        }.onFailure { message = "Couldn't reopen this video. It may have been moved or removed." }
+                                    }) { Icon(Icons.Default.PlayArrow, contentDescription = "Play ${entry.title}", tint = Green, modifier = Modifier.size(30.dp)) }
+                                }
                             }
                         }
                     }
@@ -750,3 +854,41 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is ContextWrapper -> baseContext.findActivity()
     else -> null
 }
+
+
+private fun loadRecentVideos(context: Context): List<RecentVideo> = runCatching {
+    val raw = context.getSharedPreferences("uplay_library", Context.MODE_PRIVATE).getString("recent_videos", "[]") ?: "[]"
+    val array = JSONArray(raw)
+    (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val uri = item.optString("uri").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        RecentVideo(
+            uri = uri,
+            title = item.optString("title", uri.substringAfterLast('/')),
+            positionMs = item.optLong("positionMs", 0L).coerceAtLeast(0L),
+            remote = item.optBoolean("remote", false)
+        )
+    }.take(30)
+}.getOrDefault(emptyList())
+
+private fun saveRecentVideos(context: Context, videos: List<RecentVideo>) {
+    runCatching {
+        val array = JSONArray()
+        videos.take(30).forEach { video ->
+            array.put(JSONObject().apply {
+                put("uri", video.uri)
+                put("title", video.title)
+                put("positionMs", video.positionMs)
+                put("remote", video.remote)
+            })
+        }
+        context.getSharedPreferences("uplay_library", Context.MODE_PRIVATE)
+            .edit().putString("recent_videos", array.toString()).apply()
+    }
+}
+
+private fun queryDisplayName(context: Context, uri: Uri): String = runCatching {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null
+    }
+}.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "Video"
