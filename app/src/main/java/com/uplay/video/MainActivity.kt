@@ -28,6 +28,7 @@ import android.net.Uri
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebView
+import android.webkit.WebChromeClient
 import android.webkit.WebViewClient
 import android.view.LayoutInflater
 import android.os.Bundle
@@ -319,6 +320,8 @@ private fun UPlayHome(
     val uiScope = rememberCoroutineScope()
     val lastProgressUpdateAt = remember { AtomicLong(0L) }
     var instagramLoginOpen by remember { mutableStateOf(false) }
+    var instagramWebStatus by remember { mutableStateOf("Loading Instagram sign-in…") }
+    var webPlaybackUrl by remember { mutableStateOf<String?>(null) }
     var instagramSessionReady by remember { mutableStateOf(downloadEngine.hasInstagramSession()) }
     LaunchedEffect(url) {
         val candidate = extractFirstHttpUrl(url)
@@ -370,22 +373,58 @@ private fun UPlayHome(
                         factory = { viewContext ->
                             CookieManager.getInstance().setAcceptCookie(true)
                             WebView(viewContext).apply {
+                                setBackgroundColor(android.graphics.Color.WHITE)
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
+                                settings.databaseEnabled = true
                                 settings.loadsImagesAutomatically = true
-                                webViewClient = WebViewClient()
+                                settings.javaScriptCanOpenWindowsAutomatically = true
+                                settings.setSupportMultipleWindows(false)
+                                settings.useWideViewPort = true
+                                settings.loadWithOverviewMode = true
+                                settings.mediaPlaybackRequiresUserGesture = false
+                                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                                webChromeClient = WebChromeClient()
+                                webViewClient = object : WebViewClient() {
+                                    override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
+                                        instagramWebStatus = "Loading Instagram sign-in…"
+                                    }
+                                    override fun onPageFinished(view: WebView?, pageUrl: String?) {
+                                        instagramWebStatus = if (pageUrl.orEmpty().contains("/accounts/login")) {
+                                            "Sign in above. If the page stays blank, try Open in browser and return here."
+                                        } else {
+                                            "Instagram page loaded. Finish sign-in, then tap Use session."
+                                        }
+                                        CookieManager.getInstance().flush()
+                                    }
+                                    override fun onReceivedError(
+                                        view: WebView?, request: android.webkit.WebResourceRequest?,
+                                        error: android.webkit.WebResourceError?
+                                    ) {
+                                        if (request?.isForMainFrame == true) {
+                                            instagramWebStatus = "Instagram couldn't load in this window. Check your connection or open Instagram in your browser."
+                                        }
+                                    }
+                                }
                                 loadUrl("https://www.instagram.com/accounts/login/")
                             }
                         },
-                        modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 300.dp)
+                        modifier = Modifier.fillMaxWidth().height(390.dp)
                             .clip(RoundedCornerShape(12.dp))
                     )
+                    Text(instagramWebStatus, color = Muted, fontSize = 11.sp, maxLines = 2)
+
                     Spacer(Modifier.height(10.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        TextButton(onClick = {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.instagram.com/accounts/login/")))
+                            }
+                        }) { Text("Open in browser") }
                         TextButton(onClick = { instagramLoginOpen = false }) { Text("Cancel") }
                         if (instagramSessionReady) {
                             TextButton(onClick = {
@@ -914,7 +953,31 @@ private fun UPlayHome(
                                 shape = if (fullScreen || landscape) RoundedCornerShape(0.dp) else RoundedCornerShape(26.dp)
                             )
                     ) {
-                        if (selected && player != null && player.currentMediaItem != null) {
+                        if (webPlaybackUrl != null) {
+                            AndroidView(
+                                factory = { viewContext ->
+                                    WebView(viewContext).apply {
+                                        setBackgroundColor(android.graphics.Color.BLACK)
+                                        settings.javaScriptEnabled = true
+                                        settings.domStorageEnabled = true
+                                        settings.databaseEnabled = true
+                                        settings.loadsImagesAutomatically = true
+                                        settings.mediaPlaybackRequiresUserGesture = false
+                                        settings.javaScriptCanOpenWindowsAutomatically = true
+                                        settings.setSupportMultipleWindows(false)
+                                        settings.useWideViewPort = true
+                                        settings.loadWithOverviewMode = true
+                                        CookieManager.getInstance().setAcceptCookie(true)
+                                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                                        webChromeClient = WebChromeClient()
+                                        webViewClient = WebViewClient()
+                                        loadUrl(webPlaybackUrl!!)
+                                    }
+                                },
+                                update = { view -> if (view.url != webPlaybackUrl) view.loadUrl(webPlaybackUrl!!) },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else if (selected && player != null && player.currentMediaItem != null) {
                             if (isMusicMode) {
                                 Box(
                                     modifier = Modifier.fillMaxSize()
@@ -1086,7 +1149,7 @@ private fun UPlayHome(
                                     }
                             )
                             Column(Modifier.fillMaxSize().clipToBounds()) {
-                            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+                            AnimatedVisibility(visible = controlsVisible && webPlaybackUrl == null, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
                                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xA6081423), Color.Transparent, Color(0xD906101D))))) {
                                     if (locked) {
                                         IconButton(
@@ -1244,7 +1307,7 @@ private fun UPlayHome(
                     if (!landscape && !fullScreen) {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(
-                                onClick = { picker.launch(arrayOf("video/*")) },
+                                onClick = { webPlaybackUrl = null; picker.launch(arrayOf("video/*")) },
                                 modifier = Modifier.weight(0.9f).height(48.dp),
                                 shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8DD8FF), contentColor = Color(0xFF081321))
@@ -1269,10 +1332,23 @@ private fun UPlayHome(
                                             "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
                                         )
                                         if (!directMedia) {
-                                            // A social post URL is an HTML page, not a playable media stream.
-                                            // Resolve/download it first instead of feeding HTML to ExoPlayer.
-                                            startUniversalDownload(candidate, playAfterDownload = true)
+                                            // Play the actual source page in an embedded WebView; downloading
+                                            // the entire page before playback made pasted links feel broken.
+                                            player?.pause()
+                                            webPlaybackUrl = candidate
+                                            selected = true
+                                            isMusicMode = false
+                                            controlsVisible = false
+                                            currentTab = 1
+                                            playbackError = null
+                                            message = "Opening source page in UPlay…"
+                                            val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                            recentVideos.removeAll { it.uri == candidate }
+                                            recentVideos.add(0, entry)
+                                            while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                                            saveRecentVideos(context, recentVideos)
                                         } else {
+                                            webPlaybackUrl = null
                                             onPlayUrl(candidate)
                                             selected = true
                                             isMusicMode = false
@@ -1823,10 +1899,21 @@ private fun UPlayHome(
                                         "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
                                     )
                                     if (!directMedia) {
-                                        // Webpage links (including Reels/posts) are HTML, not media.
-                                        // Resolve through the downloader and open the completed media in-player.
-                                        startUniversalDownload(candidate, playAfterDownload = true)
+                                        player?.pause()
+                                        webPlaybackUrl = candidate
+                                        selected = true
+                                        isMusicMode = false
+                                        controlsVisible = false
+                                        currentTab = 1
+                                        playbackError = null
+                                        message = "Opening source page in UPlay…"
+                                        val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                        recentVideos.removeAll { it.uri == candidate }
+                                        recentVideos.add(0, entry)
+                                        while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                                        saveRecentVideos(context, recentVideos)
                                     } else {
+                                        webPlaybackUrl = null
                                         onPlayUrl(candidate)
                                         selected = true
                                         currentTab = 1
