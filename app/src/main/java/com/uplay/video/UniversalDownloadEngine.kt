@@ -82,10 +82,17 @@ class UniversalDownloadEngine(context: Context) {
             val mp4CompatibleAudio = audioFile.extension.lowercase() in setOf("m4a", "mp4", "aac")
             val container = if (mp4CompatibleVideo && mp4CompatibleAudio) "mp4" else "mkv"
             val merged = File(workDir, "uplay_${startedAt}_merged.$container")
-            val command = "-y -i ${videoFile.absolutePath} -i ${audioFile.absolutePath} -c copy" +
-                (if (container == "mp4") " -movflags +faststart" else "") +
-                " ${merged.absolutePath}"
-            val session = FFmpegKit.execute(command)
+            val arguments = buildList {
+                add("-y")
+                add("-i"); add(videoFile.absolutePath)
+                add("-i"); add(audioFile.absolutePath)
+                add("-map"); add("0:v:0")
+                add("-map"); add("1:a:0")
+                add("-c"); add("copy")
+                if (container == "mp4") { add("-movflags"); add("+faststart") }
+                add(merged.absolutePath)
+            }.toTypedArray()
+            val session = FFmpegKit.executeWithArguments(arguments)
             if (!ReturnCode.isSuccess(session.returnCode) || !merged.exists() || merged.length() == 0L) {
                 throw IllegalStateException("The selected video and audio streams couldn't be combined.")
             }
@@ -138,12 +145,27 @@ class UniversalDownloadEngine(context: Context) {
         if (singleUri != null) return@withContext singleUri
 
         onProgress(0f, "Trying direct-file recovery…")
-        val directFile = runCatching { downloadDirectMedia(url, startedAt, onProgress) }.getOrNull()
+        val directFile = try {
+            downloadDirectMedia(url, startedAt, onProgress)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (directError: Exception) {
+            null
+        }
         if (directFile != null) return@withContext publishToDownloads(directFile)
-        throw IllegalStateException(
-            extractionFailure?.message?.take(180)
-                ?: "No complete downloadable media stream was found."
-        )
+        val extractorDetail = extractionFailure?.message.orEmpty()
+            .replace(Regex("\\u001B\\[[;\\d]*m"), "")
+            .lineSequence().map(String::trim).filter(String::isNotBlank).lastOrNull().orEmpty()
+        val detail = when {
+            isInstagramSource -> "Instagram did not expose a downloadable public media stream. Try a public Reel URL in a browser; private, login-gated, expired, or restricted media may not be available to UPlay."
+            extractorDetail.contains("Unsupported URL", true) -> "This link format is not supported by the current extractor. Try the direct media link or update UPlay's downloader."
+            extractorDetail.contains("HTTP Error 403", true) || extractorDetail.contains("Forbidden", true) -> "The source refused the download request (HTTP 403). The media may require access UPlay does not have."
+            extractorDetail.contains("HTTP Error 429", true) || extractorDetail.contains("Too Many Requests", true) -> "The source is rate-limiting downloads. Wait a while and retry."
+            extractorDetail.contains("Sign in", true) || extractorDetail.contains("login", true) -> "This source requires a signed-in session that UPlay does not currently have."
+            extractorDetail.isNotBlank() -> extractorDetail.take(220)
+            else -> "No complete downloadable media stream was found. The page may not expose a public media file."
+        }
+        throw IllegalStateException(detail)
     }
 
     private fun downloadFormat(
@@ -162,10 +184,14 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--no-playlist")
             addOption("--newline")
             addOption("--restrict-filenames")
-            addOption("--extractor-retries", "3")
-            addOption("--retries", "3")
-            addOption("--fragment-retries", "3")
-            addOption("--socket-timeout", "20")
+            addOption("--extractor-retries", "5")
+            addOption("--retries", "5")
+            addOption("--fragment-retries", "5")
+            addOption("--file-access-retries", "3")
+            addOption("--socket-timeout", "30")
+            addOption("--force-ipv4")
+            addOption("--retry-sleep", "http:1:3")
+            addOption("--fragment-retries", "5")
             if (url.contains("instagram.com", ignoreCase = true)) {
                 addOption("--add-headers", "Referer:https://www.instagram.com/")
             }
@@ -249,10 +275,29 @@ class UniversalDownloadEngine(context: Context) {
                 )
                 if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
                 val code = connection.responseCode
+                if (code == HttpURLConnection.HTTP_REQUESTED_RANGE_NOT_SATISFIABLE && existing > 0L) {
+                    val total = connection.getHeaderField("Content-Range")
+                        ?.substringAfterLast("/", "")?.toLongOrNull()
+                    if (total != null && total == existing && part.length() == total) {
+                        if (finalFile.exists()) finalFile.delete()
+                        if (!part.renameTo(finalFile)) throw IllegalStateException("Could not finalize the resumed download.")
+                        return finalFile
+                    }
+                    part.delete()
+                    lastError = IllegalStateException("The server rejected the resume range; restarting from the beginning.")
+                    if (attempt < 3) continue
+                    throw lastError!!
+                }
                 if (code !in 200..299) return null
-                val append = existing > 0L && code == HttpURLConnection.HTTP_PARTIAL
+                val contentRangeStart = connection.getHeaderField("Content-Range")
+                    ?.substringAfter("bytes ", "")?.substringBefore("-")?.toLongOrNull()
+                val append = existing > 0L && code == HttpURLConnection.HTTP_PARTIAL &&
+                    (contentRangeStart == null || contentRangeStart == existing)
                 val offset = if (append) existing else 0L
-                val expectedLength = connection.contentLengthLong.takeIf { it >= 0L }?.let { it + offset }
+                val responseLength = connection.contentLengthLong.takeIf { it >= 0L }
+                val totalFromRange = connection.getHeaderField("Content-Range")
+                    ?.substringAfterLast("/", "")?.toLongOrNull()
+                val expectedLength = totalFromRange ?: responseLength?.let { it + offset }
                 if (!append && part.exists()) part.delete()
                 BufferedInputStream(connection.inputStream).use { input ->
                     FileOutputStream(part, append).use { output ->
@@ -299,15 +344,22 @@ class UniversalDownloadEngine(context: Context) {
         val extension = file.extension.lowercase()
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
             ?: if (extension in setOf("m3u8", "mpd", "ts")) "video/mp2t" else "video/mp4"
+        val audioExtensions = setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac")
+        val isAudio = extension in audioExtensions || mime.startsWith("audio/")
         val safeName = file.name.replace(Regex("^uplay_\\d+_"), "")
+        val collection = if (isAudio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, safeName)
-            put(MediaStore.Video.Media.MIME_TYPE, mime)
-            put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/UPlay")
-            put(MediaStore.Video.Media.IS_PENDING, 1)
+            put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                "${if (isAudio) Environment.DIRECTORY_MUSIC else Environment.DIRECTORY_DOWNLOADS}/UPlay"
+            )
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val resolver = appContext.contentResolver
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+        val uri = resolver.insert(collection, values)
             ?: throw IllegalStateException("Android couldn't create a file in Downloads.")
         try {
             resolver.openOutputStream(uri, "w")?.use { output ->
