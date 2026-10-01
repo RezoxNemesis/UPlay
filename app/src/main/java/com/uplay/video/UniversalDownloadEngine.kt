@@ -70,8 +70,8 @@ class UniversalDownloadEngine(context: Context) {
             "360" -> 360
             else -> null
         }
-        val videoFormat = maxHeight?.let { "bestvideo[height<=?$it]/bestvideo" } ?: "bestvideo"
-        val singleFormat = maxHeight?.let { "best[height<=?$it]/best" } ?: "best"
+        val videoFormat = maxHeight?.let { "bestvideo[height<=?$it]" } ?: "bestvideo"
+        val singleFormat = maxHeight?.let { "best[height<=?$it]" } ?: "best"
         var extractionFailure: Exception? = null
 
         val mergedUri = try {
