@@ -70,8 +70,8 @@ class UniversalDownloadEngine(context: Context) {
             "360" -> 360
             else -> null
         }
-        val videoFormat = maxHeight?.let { "bestvideo[height<=?$it]" } ?: "bestvideo"
-        val singleFormat = maxHeight?.let { "best[height<=?$it]" } ?: "best"
+        val videoFormat = maxHeight?.let { "bestvideo[height<=?$it]/bestvideo" } ?: "bestvideo"
+        val singleFormat = maxHeight?.let { "best[height<=?$it]/best" } ?: "best"
         var extractionFailure: Exception? = null
 
         val mergedUri = try {
@@ -157,6 +157,13 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--no-playlist")
             addOption("--newline")
             addOption("--restrict-filenames")
+            addOption("--extractor-retries", "3")
+            addOption("--retries", "3")
+            addOption("--fragment-retries", "3")
+            addOption("--socket-timeout", "20")
+            if (url.contains("instagram.com", ignoreCase = true)) {
+                addOption("--add-headers", "Referer:https://www.instagram.com/")
+            }
             if (userAgent != null) addOption("--user-agent", userAgent)
             addOption("-f", format)
         }
