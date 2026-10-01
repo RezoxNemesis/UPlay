@@ -986,7 +986,7 @@ private fun UPlayHome(
                                 color = Color(0xFF8DD8FF),
                                 trackColor = if (systemDark) Color(0xFF233448) else Color(0xFFD8E8F5)
                             )
-                            Text(message, color = secondaryText, fontSize = 12.sp, maxLines = 2)
+                            Text(message, color = Muted, fontSize = 12.sp, maxLines = 2)
                         }
                         OutlinedButton(
                             onClick = { audioPicker.launch(arrayOf("audio/*")) },
