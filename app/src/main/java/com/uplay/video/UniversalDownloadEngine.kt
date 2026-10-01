@@ -137,6 +137,23 @@ class UniversalDownloadEngine(context: Context) {
                     extractionFailure = error
                 }
             }
+            // Some shared Reel links carry tracking/query parameters that confuse older
+            // extractor builds. Retry the canonical public post path once, without query data.
+            val canonicalUrl = canonicalInstagramPostUrl(url)
+            if (canonicalUrl != null && canonicalUrl != url) {
+                workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
+                try {
+                    val canonicalFile = downloadFormat(
+                        canonicalUrl, startedAt, "instagram_canonical", singleFormat,
+                        0f, 0.95f, onProgress, userAgent = mobileAgents.first()
+                    )
+                    return@withContext publishToDownloads(canonicalFile)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    extractionFailure = error
+                }
+            }
         }
 
         // A single-file format is a compatibility fallback for sources without separable tracks.
@@ -217,6 +234,7 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--extractor-retries", "5")
             addOption("--retries", "5")
             addOption("--fragment-retries", "5")
+            addOption("--concurrent-fragments", "4")
             addOption("--file-access-retries", "3")
             addOption("--socket-timeout", "30")
             addOption("--force-ipv4")
@@ -246,6 +264,19 @@ class UniversalDownloadEngine(context: Context) {
             ?.maxByOrNull { it.lastModified() }
             ?: throw IllegalStateException("The $label stream did not produce a complete file.")
     }
+    private fun canonicalInstagramPostUrl(pageUrl: String): String? {
+        val parsed = runCatching { Uri.parse(pageUrl) }.getOrNull() ?: return null
+        val host = parsed.host.orEmpty().lowercase()
+        if (host != "instagram.com" && !host.endsWith(".instagram.com")) return null
+        val parts = parsed.pathSegments
+        if (parts.size < 2) return null
+        val kind = parts[0].lowercase()
+        if (kind !in setOf("reel", "reels", "p", "tv")) return null
+        val shortcode = parts[1].takeIf { it.matches(Regex("[A-Za-z0-9_-]{5,}")) } ?: return null
+        val canonicalKind = if (kind == "reels") "reel" else kind
+        return "https://www.instagram.com/$canonicalKind/$shortcode/"
+    }
+
     private fun resolveInstagramPublicMediaUrl(pageUrl: String): String? {
         val connection = (URL(pageUrl).openConnection() as? HttpURLConnection) ?: return null
         val html = try {
@@ -295,6 +326,23 @@ class UniversalDownloadEngine(context: Context) {
             if ((parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                 !parsed.host.isNullOrBlank()) return candidate
         }
+        // Public pages sometimes embed a direct CDN URL in structured metadata rather
+        // than an Open Graph tag. Only accept explicitly named media fields and HTTP(S) URLs.
+        val embeddedMedia = Regex(
+            """["'](?:video_url|contentUrl|playable_url)["']\s*:\s*["']([^"']+)["']""",
+            RegexOption.IGNORE_CASE
+        )
+        for (match in embeddedMedia.findAll(html)) {
+            val candidate = match.groupValues[1]
+                .replace("\\/", "/")
+                .replace("\\u0026", "&", ignoreCase = true)
+                .replace("\\u003d", "=", ignoreCase = true)
+                .replace("&amp;", "&", ignoreCase = true)
+            val parsed = runCatching { Uri.parse(candidate) }.getOrNull() ?: continue
+            val host = parsed.host.orEmpty().lowercase()
+            if ((parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
+                (host.endsWith("cdninstagram.com") || host.endsWith("fbcdn.net"))) return candidate
+        }
         return null
     }
 
@@ -323,6 +371,10 @@ class UniversalDownloadEngine(context: Context) {
                 "User-Agent",
                 "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36"
             )
+            val probeHost = uri.host.orEmpty().lowercase()
+            if (probeHost.endsWith("cdninstagram.com") || probeHost.endsWith("fbcdn.net")) {
+                probe.setRequestProperty("Referer", "https://www.instagram.com/")
+            }
             if (probe.responseCode !in 200..299) return null
             mime = probe.contentType.orEmpty().substringBefore(';').trim().lowercase()
             if (mime.contains("mpegurl") || mime.contains("dash+xml") ||
@@ -360,6 +412,10 @@ class UniversalDownloadEngine(context: Context) {
                     "User-Agent",
                     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36"
                 )
+                val mediaHost = uri.host.orEmpty().lowercase()
+                if (mediaHost.endsWith("cdninstagram.com") || mediaHost.endsWith("fbcdn.net")) {
+                    connection.setRequestProperty("Referer", "https://www.instagram.com/")
+                }
                 if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
                 val code = connection.responseCode
                 if (code == 416 && existing > 0L) {
@@ -395,7 +451,7 @@ class UniversalDownloadEngine(context: Context) {
                 if (!append && part.exists()) part.delete()
                 BufferedInputStream(connection.inputStream).use { input ->
                     FileOutputStream(part, append).use { output ->
-                        val buffer = ByteArray(128 * 1024)
+                        val buffer = ByteArray(256 * 1024)
                         var total = offset
                         while (true) {
                             currentCoroutineContext().ensureActive()
