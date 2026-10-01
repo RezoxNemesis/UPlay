@@ -31,7 +31,80 @@ import kotlin.math.roundToInt
  * It handles supported page URLs and direct media files, with a resumable HTTP
  * fallback for direct media URLs. It does not supply cookies or DRM bypasses.
  */
+data class DownloadPreview(val title: String, val thumbnailUrl: String?)
+
 class UniversalDownloadEngine(context: Context) {
+    /**
+     * Best-effort public-page preview. Pages requiring a signed-in session simply return
+     * a fallback title; this does not attempt to authenticate or bypass access checks.
+     */
+    suspend fun preview(rawUrl: String): DownloadPreview? = withContext(Dispatchers.IO) {
+        val parsed = runCatching { Uri.parse(rawUrl) }.getOrNull() ?: return@withContext null
+        if (!(parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) ||
+            parsed.host.isNullOrBlank()) return@withContext null
+        val fallbackTitle = parsed.lastPathSegment.orEmpty()
+            .substringBefore('?').replace(Regex("[-_]+"), " ")
+            .takeIf { it.isNotBlank() } ?: parsed.host.orEmpty()
+        val connection = (URL(rawUrl).openConnection() as? HttpURLConnection)
+            ?: return@withContext DownloadPreview(fallbackTitle, null)
+        try {
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 8_000
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+            connection.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36"
+            )
+            if (connection.responseCode !in 200..299) return@withContext DownloadPreview(fallbackTitle, null)
+            val contentType = connection.contentType.orEmpty().substringBefore(';').trim().lowercase()
+            if (contentType.isNotBlank() && contentType !in setOf("text/html", "application/xhtml+xml")) {
+                return@withContext DownloadPreview(fallbackTitle, null)
+            }
+            val html = connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (total < 1_000_000) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 1_000_000 - total))
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    total += count
+                }
+                output.toString(Charsets.UTF_8.name())
+            }
+            fun meta(vararg names: String): String? {
+                for (tag in Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(html).map { it.value }) {
+                    val name = Regex("""(?:property|name)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                        .find(tag)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
+                    if (name !in names) continue
+                    val value = Regex("""content\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                        .find(tag)?.groupValues?.getOrNull(1) ?: continue
+                    return value.replace("&amp;", "&", true).replace("&#39;", "'", true)
+                        .replace("&quot;", "\"", true).replace("&#x26;", "&", true)
+                }
+                return null
+            }
+            val title = meta("og:title", "twitter:title")
+                ?: Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                    .find(html)?.groupValues?.getOrNull(1)?.replace(Regex("\\s+"), " ")?.trim()
+                ?: fallbackTitle
+            val thumbnail = meta("og:image", "og:image:url", "twitter:image")
+                ?.takeIf { candidate ->
+                    val imageUri = runCatching { Uri.parse(candidate) }.getOrNull()
+                    imageUri != null &&
+                        (imageUri.scheme.equals("https", true) || imageUri.scheme.equals("http", true)) &&
+                        !imageUri.host.isNullOrBlank()
+                }
+            DownloadPreview(title.take(180), thumbnail)
+        } catch (_: Exception) {
+            DownloadPreview(fallbackTitle, null)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private val appContext = context.applicationContext
     private val workDir: File by lazy {
         File(appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: appContext.filesDir, "uplay-work")
@@ -75,12 +148,25 @@ class UniversalDownloadEngine(context: Context) {
             else -> null
         }
         val videoFormat = maxHeight?.let { "bestvideo[height<=?$it]" } ?: "bestvideo"
-        // Prefer separate high-quality streams, but allow yt-dlp to merge them when
-        // the source has no pre-muxed format (common on social-video extractors).
+        // Prefer a single audio+video file first to avoid downloading two large tracks
+        // serially on mobile data. If only separate tracks exist, keep the FFmpeg mux fallback.
         val singleFormat = maxHeight?.let {
-            "bestvideo[height<=?$it]+bestaudio/best[height<=?$it]"
-        } ?: "bestvideo+bestaudio/best"
+            "best[height<=?$it]/bestvideo[height<=?$it]+bestaudio/best[height<=?$it]"
+        } ?: "best/bestvideo+bestaudio"
         var extractionFailure: Exception? = null
+
+        val combinedUri = try {
+            onProgress(0f, "Selecting a combined video/audio stream…")
+            val combinedFile = downloadFormat(url, startedAt, "combined", singleFormat, 0f, 0.96f, onProgress)
+            onProgress(98f, "Verifying and saving ${combinedFile.name}…")
+            publishToDownloads(combinedFile)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            extractionFailure = error
+            null
+        }
+        if (combinedUri != null) return@withContext combinedUri
 
         val mergedUri = try {
             onProgress(0f, "Finding separate video and audio streams…")
@@ -234,7 +320,9 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--extractor-retries", "5")
             addOption("--retries", "5")
             addOption("--fragment-retries", "5")
-            addOption("--concurrent-fragments", "4")
+            addOption("--concurrent-fragments", "8")
+            addOption("--buffer-size", "16K")
+            addOption("--http-chunk-size", "10M")
             addOption("--file-access-retries", "3")
             addOption("--socket-timeout", "30")
             addOption("--force-ipv4")
@@ -246,11 +334,31 @@ class UniversalDownloadEngine(context: Context) {
             if (userAgent != null) addOption("--user-agent", userAgent)
             addOption("-f", format)
         }
+        val progressSample = longArrayOf(0L, System.currentTimeMillis())
         val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, _ ->
             val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 100f) else 0f
             val combinedProgress = (progressStart + safeProgress * progressScale).coerceIn(0f, 99f)
+            val currentBytes = workDir.listFiles()
+                ?.filter { it.isFile && it.name.startsWith(prefix) }
+                ?.maxOfOrNull { it.length() } ?: 0L
+            val now = System.currentTimeMillis()
+            var speedBytesPerSecond = 0L
+            if (now - progressSample[1] >= 500L) {
+                speedBytesPerSecond = ((currentBytes - progressSample[0]).coerceAtLeast(0L) * 1000L) /
+                    (now - progressSample[1]).coerceAtLeast(1L)
+                progressSample[0] = currentBytes
+                progressSample[1] = now
+            }
+            val estimatedTotal = if (safeProgress > 0f && currentBytes > 0L) {
+                (currentBytes * 100f / safeProgress).toLong()
+            } else 0L
+            val sizeStatus = if (currentBytes > 0L) {
+                " · ${formatBytes(currentBytes)}" +
+                    if (estimatedTotal > currentBytes) " / ~${formatBytes(estimatedTotal)}" else ""
+            } else ""
+            val speedStatus = if (speedBytesPerSecond > 0L) " · ${formatSpeed(speedBytesPerSecond)}" else ""
             val status = when {
-                safeProgress > 0f -> "Downloading $label stream: ${safeProgress.roundToInt()}%" +
+                safeProgress > 0f -> "Downloading $label stream: ${safeProgress.roundToInt()}%$sizeStatus$speedStatus" +
                     if (eta > 0L) " · about ${eta}s left" else ""
                 else -> "Resolving $label stream…"
             }
@@ -448,6 +556,8 @@ class UniversalDownloadEngine(context: Context) {
                 val totalFromRange = connection.getHeaderField("Content-Range")
                     ?.substringAfterLast("/", "")?.toLongOrNull()
                 val expectedLength = totalFromRange ?: responseLength?.let { it + offset }
+                var lastSpeedBytes = offset
+                var lastSpeedAt = System.currentTimeMillis()
                 if (!append && part.exists()) part.delete()
                 BufferedInputStream(connection.inputStream).use { input ->
                     FileOutputStream(part, append).use { output ->
@@ -459,11 +569,33 @@ class UniversalDownloadEngine(context: Context) {
                             if (count < 0) break
                             output.write(buffer, 0, count)
                             total += count
+                            val now = System.currentTimeMillis()
                             if (expectedLength != null && expectedLength > 0L) {
                                 val percent = (total * 100f / expectedLength).coerceIn(0f, 100f)
-                                onProgress(percent, "Downloading ${percent.roundToInt()}% · direct media")
+                                val elapsed = now - lastSpeedAt
+                                val speed = if (elapsed >= 500L) {
+                                    ((total - lastSpeedBytes).coerceAtLeast(0L) * 1000L) / elapsed.coerceAtLeast(1L)
+                                } else 0L
+                                if (elapsed >= 500L) {
+                                    lastSpeedBytes = total
+                                    lastSpeedAt = now
+                                }
+                                val speedText = if (speed > 0L) " · ${formatSpeed(speed)}" else ""
+                                onProgress(
+                                    percent,
+                                    "Downloading ${percent.roundToInt()}% · ${formatBytes(total)} / ${formatBytes(expectedLength)}$speedText"
+                                )
                             } else {
-                                onProgress(0f, "Downloading direct media…")
+                                val elapsed = now - lastSpeedAt
+                                val speed = if (elapsed >= 500L) {
+                                    ((total - lastSpeedBytes).coerceAtLeast(0L) * 1000L) / elapsed.coerceAtLeast(1L)
+                                } else 0L
+                                if (elapsed >= 500L) {
+                                    lastSpeedBytes = total
+                                    lastSpeedAt = now
+                                }
+                                val speedText = if (speed > 0L) " · ${formatSpeed(speed)}" else ""
+                                onProgress(0f, "Downloading ${formatBytes(total)}$speedText · direct media")
                             }
                         }
                         output.fd.sync()
@@ -503,6 +635,19 @@ class UniversalDownloadEngine(context: Context) {
             }
         }
         throw lastError ?: IllegalStateException("Direct download failed.")
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes >= 1024L * 1024L * 1024L -> "%.2f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
+        bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+        bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
+        else -> "$bytes B"
+    }
+
+    private fun formatSpeed(bytesPerSecond: Long): String = when {
+        bytesPerSecond >= 1024L * 1024L -> "%.2f MB/s".format(bytesPerSecond / (1024.0 * 1024.0))
+        bytesPerSecond >= 1024L -> "%.0f KB/s".format(bytesPerSecond / 1024.0)
+        else -> "$bytesPerSecond B/s"
     }
 
     private fun publishToDownloads(file: File): Uri {

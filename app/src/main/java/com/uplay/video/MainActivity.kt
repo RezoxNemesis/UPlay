@@ -16,6 +16,7 @@ import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.provider.MediaStore
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.CancellationSignal
 import android.util.Size
@@ -146,6 +147,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -303,11 +305,38 @@ private fun UPlayHome(
     var playbackDuration by remember { mutableLongStateOf(0L) }
     var downloadBusy by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadPreviewTitle by remember { mutableStateOf<String?>(null) }
+    var downloadPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var downloadQuality by remember { mutableStateOf("Best available") }
     var qualityMenuExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val uiScope = rememberCoroutineScope()
+    LaunchedEffect(url) {
+        val candidate = extractFirstHttpUrl(url)
+        if (candidate == null) {
+            downloadPreviewTitle = null
+            downloadPreviewBitmap = null
+            return@LaunchedEffect
+        }
+        val sourceHost = runCatching { Uri.parse(candidate).host.orEmpty() }.getOrDefault("")
+        downloadPreviewTitle = "Looking up $sourceHost…"
+        downloadPreviewBitmap = null
+        delay(550)
+        val preview = runCatching { downloadEngine.preview(candidate) }.getOrNull()
+        if (extractFirstHttpUrl(url) != candidate) return@LaunchedEffect
+        downloadPreviewTitle = preview?.title ?: sourceHost.ifBlank { "Video source" }
+        val thumbnail = preview?.thumbnailUrl ?: return@LaunchedEffect
+        val bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val connection = URL(thumbnail).openConnection()
+                connection.connectTimeout = 6_000
+                connection.readTimeout = 6_000
+                connection.getInputStream().use { BitmapFactory.decodeStream(it) }
+            }.getOrNull()
+        }
+        if (extractFirstHttpUrl(url) == candidate) downloadPreviewBitmap = bitmap
+    }
     val configuration = LocalConfiguration.current
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     var originalSystemUiFlags by remember { mutableIntStateOf(0) }
@@ -454,6 +483,7 @@ private fun UPlayHome(
         if (downloadBusy) return
         downloadBusy = true
         downloadProgress = 0f
+        if (downloadPreviewTitle == null) downloadPreviewTitle = "Identifying ${parsed?.host.orEmpty()}…"
         message = when {
             playAfterDownload -> "Resolving the video link for playback…"
             downloaderReady -> "Finding $downloadQuality video streams…"
@@ -1216,6 +1246,55 @@ private fun UPlayHome(
                                                 downloadQuality = quality
                                                 qualityMenuExpanded = false
                                             }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (downloadBusy || downloadPreviewTitle != null) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (systemDark) Color(0xFF101A29) else Color(0xFFEAF5FF)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val previewBitmap = downloadPreviewBitmap
+                                    if (previewBitmap != null) {
+                                        Image(
+                                            bitmap = previewBitmap.asImageBitmap(),
+                                            contentDescription = "Video thumbnail preview",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.size(width = 96.dp, height = 64.dp)
+                                                .clip(RoundedCornerShape(9.dp))
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier.size(width = 96.dp, height = 64.dp)
+                                                .clip(RoundedCornerShape(9.dp))
+                                                .background(if (systemDark) Color(0xFF1D2A3B) else Color(0xFFD4E9FA)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = Color(0xFF8DD8FF))
+                                        }
+                                    }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            downloadPreviewTitle ?: "Identifying video…",
+                                            color = if (systemDark) Color.White else Color(0xFF101725),
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 2
+                                        )
+                                        Text(
+                                            if (downloadBusy) "Source preview · live transfer details below" else "Source preview",
+                                            color = Muted,
+                                            fontSize = 11.sp,
+                                            maxLines = 2
                                         )
                                     }
                                 }
