@@ -2014,12 +2014,26 @@ private fun RotaryControlDial(
                                 runCatching {
                                     rotationAnim.animateDecay(
                                         initialVelocity = lastAngularDelta * 18f,
-                                        animationSpec = exponentialDecay(frictionMultiplier = 2.8f)
+                                        animationSpec = exponentialDecay(frictionMultiplier = 2.8f),
+                                        block = {
+                                            val animatedPage = pageFor(value)
+                                            if (animatedPage != actionPage) actionPage = animatedPage
+                                            val animatedTick = kotlin.math.floor(value / 30f).toInt()
+                                            if (animatedTick != lastSoundDetent) {
+                                                lastSoundDetent = animatedTick
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                tickSound()
+                                            }
+                                        }
                                     )
                                 }
                             }
                             val detent = (rotationAnim.value / 120f).roundToInt() * 120f
-                            rotationAnim.animateTo(detent, spring(dampingRatio = 0.76f, stiffness = 360f))
+                            rotationAnim.animateTo(
+                                detent,
+                                spring(dampingRatio = 0.76f, stiffness = 360f),
+                                block = { actionPage = pageFor(value) }
+                            )
                             actionPage = pageFor(rotationAnim.value)
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             tickSound()
