@@ -1975,13 +1975,18 @@ private fun RotaryControlDial(
         Icons.Default.GraphicEq to "Audio tracks",
         Icons.Default.Fullscreen to "Toggle fullscreen"
     )
-    val pageSize = 3
+    // Six controls occupy the full rotary ring; clipping shows only the three on
+    // the screen-facing half. A complete revolution advances to the next six actions.
+    val pageSize = 6
     val pageCount = (actionCatalog.size + pageSize - 1) / pageSize
     val actions = actionCatalog.drop(actionPage * pageSize).take(pageSize)
     fun pageFor(degrees: Float): Int {
-        // Change the three-action half-wheel only after crossing a half-page detent,
-        // so a tiny counter-clockwise movement at zero does not jump to the last page.
-        val page = (degrees / 120f).roundToInt()
+        // Count completed turns in either direction. Small reverse gestures never jump pages.
+        val page = if (degrees >= 0f) {
+            kotlin.math.floor(degrees / 360f).toInt()
+        } else {
+            kotlin.math.ceil(degrees / 360f).toInt()
+        }
         return ((page % pageCount) + pageCount) % pageCount
     }
     val unfold by animateFloatAsState(
@@ -2066,7 +2071,7 @@ private fun RotaryControlDial(
                                     )
                                 }
                             }
-                            val detent = (rotationAnim.value / 120f).roundToInt() * 120f
+                            val detent = (rotationAnim.value / 60f).roundToInt() * 60f
                             rotationAnim.animateTo(
                                 detent,
                                 spring(dampingRatio = 0.88f, stiffness = 170f),
@@ -2122,23 +2127,29 @@ private fun RotaryControlDial(
 
         val controlRadius = 96f * unfold
         actions.forEachIndexed { index, item ->
-            val angle = Math.toRadians((135f + index * 45f + rotation).toDouble())
-            val x = (kotlin.math.cos(angle) * controlRadius).dp
-            val y = (kotlin.math.sin(angle) * controlRadius).dp
-            RadialControl(
-                icon = item.first,
-                label = item.second,
-                enabled = open,
-                modifier = Modifier.align(Alignment.Center)
-                    .offset(x = x, y = y)
-                    .graphicsLayer {
-                        alpha = unfold
-                        val scale = 0.45f + 0.55f * unfold
-                        scaleX = scale
-                        scaleY = scale
-                    },
-                onClick = { onAction(actionPage * pageSize + index) }
-            )
+            val degrees = index * 60f + rotation
+            val normalizedDegrees = ((degrees % 360f) + 360f) % 360f
+            // Only draw controls on the visible left semicircle; the opposite half
+            // travels behind the phone edge and re-enters as the dial is turned.
+            if (normalizedDegrees >= 90f && normalizedDegrees <= 270f) {
+                val angle = Math.toRadians(degrees.toDouble())
+                val x = (kotlin.math.cos(angle) * controlRadius).dp
+                val y = (kotlin.math.sin(angle) * controlRadius).dp
+                RadialControl(
+                    icon = item.first,
+                    label = item.second,
+                    enabled = open,
+                    modifier = Modifier.align(Alignment.Center)
+                        .offset(x = x, y = y)
+                        .graphicsLayer {
+                            alpha = unfold
+                            val scale = 0.45f + 0.55f * unfold
+                            scaleX = scale
+                            scaleY = scale
+                        },
+                    onClick = { onAction(actionPage * pageSize + index) }
+                )
+            }
         }
 
         Surface(
