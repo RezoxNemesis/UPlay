@@ -2172,7 +2172,7 @@ private fun FilmRollIndicator(darkTheme: Boolean, modifier: Modifier = Modifier)
 }
 
 private fun extractFirstHttpUrl(input: String): String? {
-    val candidate = Regex("""https?://[^\\s<>"']+""", RegexOption.IGNORE_CASE)
+    val candidate = Regex("""https?://[^\s<>"']+""", RegexOption.IGNORE_CASE)
         .find(input)?.value?.trimEnd('.', ',', ';', '!', '?', ')', ']', '}') ?: return null
     return runCatching {
         val uri = Uri.parse(candidate)
