@@ -390,12 +390,17 @@ private fun UPlayHome(
                                         instagramWebStatus = "Loading Instagram sign-in…"
                                     }
                                     override fun onPageFinished(view: WebView?, pageUrl: String?) {
-                                        instagramWebStatus = if (pageUrl.orEmpty().contains("/accounts/login")) {
-                                            "Sign in above. If the page stays blank, try Open in browser and return here."
-                                        } else {
-                                            "Instagram page loaded. Finish sign-in, then tap Use session."
-                                        }
                                         CookieManager.getInstance().flush()
+                                        view?.evaluateJavascript(
+                                            "(document.body && document.body.innerText ? document.body.innerText.trim().length : 0).toString()"
+                                        ) { rawLength ->
+                                            val hasPageText = rawLength.orEmpty().trim('"').toIntOrNull()?.let { it > 0 } == true
+                                            instagramWebStatus = when {
+                                                !hasPageText -> "Instagram returned a blank sign-in page. Try Open browser; its login cookies may not transfer into this window."
+                                                pageUrl.orEmpty().contains("/accounts/login") -> "Sign in above, then tap Use session."
+                                                else -> "Instagram page loaded. Finish sign-in, then tap Use session."
+                                            }
+                                        }
                                     }
                                     override fun onReceivedError(
                                         view: WebView?, request: android.webkit.WebResourceRequest?,
@@ -403,6 +408,15 @@ private fun UPlayHome(
                                     ) {
                                         if (request?.isForMainFrame == true) {
                                             instagramWebStatus = "Instagram couldn't load in this window. Check your connection or open Instagram in your browser."
+                                        }
+                                    }
+                                    override fun onReceivedHttpError(
+                                        view: WebView?,
+                                        request: android.webkit.WebResourceRequest?,
+                                        errorResponse: android.webkit.WebResourceResponse?
+                                    ) {
+                                        if (request?.isForMainFrame == true && (errorResponse?.statusCode ?: 200) >= 400) {
+                                            instagramWebStatus = "Instagram sign-in returned HTTP ${errorResponse?.statusCode}. Try again later or open Instagram in your browser."
                                         }
                                     }
                                 }
