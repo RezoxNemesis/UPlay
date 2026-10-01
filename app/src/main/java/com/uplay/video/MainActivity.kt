@@ -1806,17 +1806,29 @@ private fun UPlayHome(
                                     (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                     !parsed.host.isNullOrBlank()
                                 if (validUrl) {
-                                    onPlayUrl(candidate)
-                                    selected = true
-                                    currentTab = 1
-                                    controlsVisible = true
-                                    playbackError = null
-                                    val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
-                                    recentVideos.removeAll { it.uri == candidate }
-                                    recentVideos.add(0, entry)
-                                    while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
-                                    saveRecentVideos(context, recentVideos)
-                                    message = "Loading video link…"
+                                    val path = parsed?.path.orEmpty().lowercase()
+                                    val extension = path.substringAfterLast('/').substringAfterLast('.', "")
+                                    val directMedia = extension in setOf(
+                                        "mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp",
+                                        "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
+                                    )
+                                    if (!directMedia) {
+                                        // Webpage links (including Reels/posts) are HTML, not media.
+                                        // Resolve through the downloader and open the completed media in-player.
+                                        startUniversalDownload(candidate, playAfterDownload = true)
+                                    } else {
+                                        onPlayUrl(candidate)
+                                        selected = true
+                                        currentTab = 1
+                                        controlsVisible = true
+                                        playbackError = null
+                                        val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                        recentVideos.removeAll { it.uri == candidate }
+                                        recentVideos.add(0, entry)
+                                        while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                                        saveRecentVideos(context, recentVideos)
+                                        message = "Loading direct media link…"
+                                    }
                                 } else message = "Enter a valid HTTP(S) video link first."
                             },
                             modifier = Modifier.weight(1f).height(46.dp),
