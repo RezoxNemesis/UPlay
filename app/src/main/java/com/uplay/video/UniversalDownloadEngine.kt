@@ -16,7 +16,7 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * Multi-source downloader backed by yt-dlp's site extractors and FFmpeg.
+ * Multi-source downloader backed by yt-dlp's site extractors.
  * It handles supported page URLs, direct media files, and supported segmented
  * streams. It intentionally does not supply cookies, credentials, or DRM bypasses.
  */
@@ -40,7 +40,6 @@ class UniversalDownloadEngine(context: Context) {
 
     suspend fun download(
         rawUrl: String,
-        processId: String,
         onProgress: (Float, String) -> Unit
     ): Uri = withContext(Dispatchers.IO) {
         val url = rawUrl.trim()
@@ -53,7 +52,7 @@ class UniversalDownloadEngine(context: Context) {
         }
 
         val startedAt = System.currentTimeMillis()
-        val outputTemplate = File(workDir, "uplay_\${startedAt}_%(title).100B_[%(id)s].%(ext)s").absolutePath
+        val outputTemplate = File(workDir, "uplay_${startedAt}_%(title).100B_[%(id)s].%(ext)s").absolutePath
         val request = YtDlpRequest(url).setOutputTemplate(outputTemplate).apply {
             addOption("--no-playlist")
             addOption("--newline")
@@ -65,18 +64,18 @@ class UniversalDownloadEngine(context: Context) {
         val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, line ->
             val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 100f) else 0f
             val status = when {
-                safeProgress > 0f -> "Downloading \${safeProgress.roundToInt()}%" +
-                    if (eta > 0L) " · about \${eta}s left" else ""
+                safeProgress > 0f -> "Downloading ${safeProgress.roundToInt()}%" +
+                    if (eta > 0L) " · about ${eta}s left" else ""
                 line.isNotBlank() -> line.take(140)
                 else -> "Resolving media source…"
             }
             onProgress(safeProgress, status)
         })
         if (!response.isSuccess) {
-            throw IllegalStateException(response.errorOutput.ifBlank { "The media extractor returned exit code \${response.exitCode}." })
+            throw IllegalStateException(response.errorOutput.ifBlank { "The media extractor returned exit code ${response.exitCode}." })
         }
 
-        val prefix = "uplay_\${startedAt}_"
+        val prefix = "uplay_${startedAt}_"
         val completed = workDir.listFiles()
             ?.filter { it.isFile && it.name.startsWith(prefix) && !it.name.endsWith(".part") && it.length() > 0L }
             ?.maxByOrNull { it.lastModified() }
@@ -92,11 +91,11 @@ class UniversalDownloadEngine(context: Context) {
         val extension = file.extension.lowercase()
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
             ?: if (extension in setOf("m3u8", "mpd", "ts")) "video/mp2t" else "video/mp4"
-        val safeName = file.name.replace(Regex("^uplay_\\\\d+_"), "")
+        val safeName = file.name.replace(Regex("^uplay_\\d+_"), "")
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, safeName)
             put(MediaStore.Video.Media.MIME_TYPE, mime)
-            put(MediaStore.Video.Media.RELATIVE_PATH, "\${Environment.DIRECTORY_DOWNLOADS}/UPlay")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/UPlay")
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
         val resolver = appContext.contentResolver
