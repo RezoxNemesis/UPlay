@@ -417,7 +417,7 @@ private fun UPlayHome(
         }
         uiScope.launch {
             try {
-                downloadEngine.download(candidate, "uplay-download-\${System.currentTimeMillis()}") { percent, status ->
+                downloadEngine.download(candidate) { percent, status ->
                     uiScope.launch {
                         downloadProgress = (percent / 100f).coerceIn(0f, 1f)
                         if (status.isNotBlank()) message = status
@@ -442,7 +442,7 @@ private fun UPlayHome(
                     detail.contains("network", true) || detail.contains("timed out", true) ||
                         detail.contains("connection", true) ->
                         "The connection failed. Check your network and retry."
-                    else -> "Download failed: \${detail.take(120).ifBlank { "The source could not be processed." }}"
+                    else -> "Download failed: ${detail.take(120).ifBlank { "The source could not be processed." }}"
                 }
             } finally {
                 downloadBusy = false
