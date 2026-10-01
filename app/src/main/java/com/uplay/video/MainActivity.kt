@@ -378,6 +378,12 @@ private fun UPlayHome(
                                 settings.domStorageEnabled = true
                                 settings.databaseEnabled = true
                                 settings.loadsImagesAutomatically = true
+                                // Instagram often leaves embedded WebViews on a blank shell when the
+                                // default Android WebView "wv" marker is present. Keep the device's
+                                // actual Chromium version but remove the explicit WebView marker.
+                                settings.userAgentString = settings.userAgentString
+                                    .replace("; wv", "")
+                                    .replace(" Version/4.0", "")
                                 settings.javaScriptCanOpenWindowsAutomatically = true
                                 settings.setSupportMultipleWindows(false)
                                 settings.useWideViewPort = true
@@ -420,7 +426,7 @@ private fun UPlayHome(
                                         }
                                     }
                                 }
-                                loadUrl("https://m.instagram.com/accounts/login/")
+                                loadUrl("https://www.instagram.com/accounts/login/")
                             }
                         },
                         modifier = Modifier.fillMaxWidth().height(390.dp)
@@ -993,6 +999,11 @@ private fun UPlayHome(
                                         settings.domStorageEnabled = true
                                         settings.databaseEnabled = true
                                         settings.loadsImagesAutomatically = true
+                                        // Use a browser-like UA so sites that block Android WebView shells
+                                        // can render their own player UI where embedding is permitted.
+                                        settings.userAgentString = settings.userAgentString
+                                            .replace("; wv", "")
+                                            .replace(" Version/4.0", "")
                                         settings.mediaPlaybackRequiresUserGesture = false
                                         settings.javaScriptCanOpenWindowsAutomatically = true
                                         settings.setSupportMultipleWindows(false)
@@ -1363,21 +1374,15 @@ private fun UPlayHome(
                                             "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
                                         )
                                         if (!directMedia) {
-                                            // Play the actual source page in an embedded WebView; downloading
-                                            // the entire page before playback made pasted links feel broken.
-                                            player?.pause()
-                                            webPlaybackUrl = candidate
+                                            // Resolve page URLs through yt-dlp first so supported sites open
+                                            // as real media in UPlay's player. Only fall back to the site's
+                                            // own embedded player when stream extraction fails.
+                                            webPlaybackUrl = null
                                             selected = true
                                             isMusicMode = false
-                                            controlsVisible = false
                                             currentTab = 1
                                             playbackError = null
-                                            message = "Opening source page in UPlay…"
-                                            val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
-                                            recentVideos.removeAll { it.uri == candidate }
-                                            recentVideos.add(0, entry)
-                                            while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
-                                            saveRecentVideos(context, recentVideos)
+                                            startUniversalDownload(candidate, playAfterDownload = true)
                                         } else {
                                             webPlaybackUrl = null
                                             onPlayUrl(candidate)
