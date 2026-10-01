@@ -15,6 +15,8 @@ import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -146,11 +148,13 @@ class UniversalDownloadEngine(context: Context) {
         if (singleUri != null) return@withContext singleUri
 
         onProgress(0f, "Trying direct-file recovery…")
+        var directFailure: Exception? = null
         val directFile = try {
             downloadDirectMedia(url, startedAt, onProgress)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (directError: Exception) {
+            directFailure = directError
             null
         }
         if (directFile != null) return@withContext publishToDownloads(directFile)
@@ -164,6 +168,7 @@ class UniversalDownloadEngine(context: Context) {
             extractorDetail.contains("HTTP Error 429", true) || extractorDetail.contains("Too Many Requests", true) -> "The source is rate-limiting downloads. Wait a while and retry."
             extractorDetail.contains("Sign in", true) || extractorDetail.contains("login", true) -> "This source requires a signed-in session that UPlay does not currently have."
             extractorDetail.isNotBlank() -> extractorDetail.take(220)
+            directFailure?.message?.isNotBlank() == true -> "Direct-media recovery failed: ${directFailure?.message?.take(180)}"
             else -> "No complete downloadable media stream was found. The page may not expose a public media file."
         }
         throw IllegalStateException(detail)
@@ -216,7 +221,7 @@ class UniversalDownloadEngine(context: Context) {
             ?.maxByOrNull { it.lastModified() }
             ?: throw IllegalStateException("The $label stream did not produce a complete file.")
     }
-    private fun downloadDirectMedia(
+    private suspend fun downloadDirectMedia(
         rawUrl: String,
         startedAt: Long,
         onProgress: (Float, String) -> Unit
@@ -264,6 +269,7 @@ class UniversalDownloadEngine(context: Context) {
         var attempt = 0
         var lastError: Exception? = null
         while (attempt < 3) {
+            currentCoroutineContext().ensureActive()
             attempt++
             val existing = part.takeIf { it.exists() }?.length() ?: 0L
             val connection = (URL(rawUrl).openConnection() as? HttpURLConnection) ?: return null
@@ -295,8 +301,8 @@ class UniversalDownloadEngine(context: Context) {
                 if (code !in 200..299) return null
                 val contentRangeStart = connection.getHeaderField("Content-Range")
                     ?.substringAfter("bytes ", "")?.substringBefore("-")?.toLongOrNull()
-                if (existing > 0L && code == HttpURLConnection.HTTP_PARTIAL &&
-                    contentRangeStart != existing) {
+                if (code == HttpURLConnection.HTTP_PARTIAL &&
+                    contentRangeStart != (if (existing > 0L) existing else 0L)) {
                     part.delete()
                     lastError = IllegalStateException("The server returned an incompatible resume range; restarting.")
                     if (attempt < 3) continue
@@ -315,6 +321,7 @@ class UniversalDownloadEngine(context: Context) {
                         val buffer = ByteArray(128 * 1024)
                         var total = offset
                         while (true) {
+                            currentCoroutineContext().ensureActive()
                             val count = input.read(buffer)
                             if (count < 0) break
                             output.write(buffer, 0, count)
@@ -329,10 +336,26 @@ class UniversalDownloadEngine(context: Context) {
                         output.fd.sync()
                     }
                 }
-                if (expectedLength != null && part.length() < expectedLength) {
-                    lastError = IllegalStateException("Direct download ended before all bytes arrived.")
+                if (part.length() == 0L) {
+                    part.delete()
+                    throw IllegalStateException("The source returned an empty media file.")
+                }
+                if (expectedLength != null && part.length() != expectedLength) {
+                    lastError = IllegalStateException(
+                        "Direct download size mismatch: expected $expectedLength bytes, received ${part.length()}."
+                    )
                     if (attempt < 3) continue
                     throw lastError!!
+                }
+                // Some servers label an HTML error/login page as generic binary data.
+                val signature = ByteArray(512)
+                val signatureLength = part.inputStream().use { it.read(signature) }.coerceAtLeast(0)
+                val prefixText = String(signature, 0, signatureLength, Charsets.UTF_8)
+                    .trimStart('\uFEFF', ' ', '\\n', '\\r', '\\t').lowercase()
+                if (prefixText.startsWith("<!doctype html") || prefixText.startsWith("<html") ||
+                    prefixText.startsWith("{\\"error\\"") || prefixText.startsWith("{\\"message\\"")) {
+                    part.delete()
+                    throw IllegalStateException("The direct URL returned an HTML/JSON page, not a media file.")
                 }
                 if (finalFile.exists()) finalFile.delete()
                 if (!part.renameTo(finalFile)) throw IllegalStateException("Could not finalize the downloaded file.")
@@ -376,7 +399,7 @@ class UniversalDownloadEngine(context: Context) {
             resolver.openOutputStream(uri, "w")?.use { output ->
                 file.inputStream().use { input -> input.copyTo(output, bufferSize = 1024 * 256) }
             } ?: throw IllegalStateException("Android couldn't open the destination file.")
-            val ready = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+            val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
             resolver.update(uri, ready, null, null)
             runCatching { file.delete() }
             return uri
