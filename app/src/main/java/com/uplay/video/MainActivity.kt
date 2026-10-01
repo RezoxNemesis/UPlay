@@ -1843,7 +1843,9 @@ private suspend fun resolvePublicInstagramVideoUrl(postUrl: String): String? = w
         connection.connectTimeout = 8_000
         connection.readTimeout = 8_000
         connection.requestMethod = "GET"
-        connection.setRequestProperty("Accept", "text/html")
+        connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+        connection.setRequestProperty("Accept-Language", "en-US,en;q=0.8")
+        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
         // No account cookies, credentials, proxies, or access-control workarounds are used.
         if (connection.responseCode !in 200..299) return@withContext null
         val html = connection.inputStream.use { input ->
@@ -1868,7 +1870,9 @@ private suspend fun resolvePublicInstagramVideoUrl(postUrl: String): String? = w
                 val tag = match.value
                 val property = propertyRegex.find(tag)?.groupValues?.getOrNull(1)?.lowercase()
                 if (property in videoKeys) contentRegex.find(tag)?.groupValues?.getOrNull(1) else null
-            } ?: return@withContext null
+            } ?: Regex("""["']video_url["']\s*:\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(html)?.groupValues?.getOrNull(1)
+            ?: return@withContext null
         val decoded = rawMediaUrl
             .replace("&amp;", "&", ignoreCase = true)
             .replace("\\/", "/")
@@ -1878,7 +1882,8 @@ private suspend fun resolvePublicInstagramVideoUrl(postUrl: String): String? = w
         val mediaHost = mediaUri.host.orEmpty().lowercase()
         decoded.takeIf {
             mediaUri.scheme.equals("https", ignoreCase = true) &&
-                (mediaHost.endsWith("cdninstagram.com") || mediaHost.endsWith("fbcdn.net"))
+                (mediaHost == "cdninstagram.com" || mediaHost.endsWith(".cdninstagram.com") ||
+                    mediaHost == "fbcdn.net" || mediaHost.endsWith(".fbcdn.net"))
         }
     } catch (_: Exception) {
         null
