@@ -351,9 +351,9 @@ class UniversalDownloadEngine(context: Context) {
                 val signature = ByteArray(512)
                 val signatureLength = part.inputStream().use { it.read(signature) }.coerceAtLeast(0)
                 val prefixText = String(signature, 0, signatureLength, Charsets.UTF_8)
-                    .trimStart('\uFEFF', ' ', '\\n', '\\r', '\\t').lowercase()
+                    .trimStart('\uFEFF', ' ', '\n', '\r', '\t').lowercase()
                 if (prefixText.startsWith("<!doctype html") || prefixText.startsWith("<html") ||
-                    prefixText.startsWith("{\\"error\\"") || prefixText.startsWith("{\\"message\\"")) {
+                    prefixText.startsWith("{\"error\"") || prefixText.startsWith("{\"message\"")) {
                     part.delete()
                     throw IllegalStateException("The direct URL returned an HTML/JSON page, not a media file.")
                 }
