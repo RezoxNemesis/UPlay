@@ -542,11 +542,11 @@ class UniversalDownloadEngine(context: Context) {
         val metaTags = Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE)
         for (match in metaTags.findAll(html)) {
             val tag = match.value
-            val key = Regex("""(?:property|name)\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val key = Regex("""(?:property|name)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
                 .find(tag)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
             if (key !in setOf("og:video", "og:video:url", "og:video:secure_url",
                     "twitter:player:stream", "twitter:player:stream:content_type")) continue
-            val value = Regex("""content\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val value = Regex("""content\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
                 .find(tag)?.groupValues?.getOrNull(1) ?: continue
             normalize(value)?.let { return it }
         }
@@ -555,7 +555,7 @@ class UniversalDownloadEngine(context: Context) {
         val mediaTags = Regex("<(?:video|source)\\b[^>]*>", RegexOption.IGNORE_CASE)
         for (match in mediaTags.findAll(html)) {
             val tag = match.value
-            val value = Regex("""\\bsrc\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val value = Regex("""\bsrc\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
                 .find(tag)?.groupValues?.getOrNull(1) ?: continue
             normalize(value)?.let { candidate ->
                 val path = runCatching { Uri.parse(candidate).lastPathSegment.orEmpty() }.getOrDefault("")
@@ -566,7 +566,7 @@ class UniversalDownloadEngine(context: Context) {
         }
 
         // JSON-LD and common public embed metadata sometimes expose a direct content URL.
-        val jsonMedia = Regex("""["'](?:contentUrl|video_url|playable_url)["']\\s*:\\s*["']([^"']+)["']""",
+        val jsonMedia = Regex("""["'](?:contentUrl|video_url|playable_url)["']\s*:\s*["']([^"']+)["']""",
             RegexOption.IGNORE_CASE)
         for (match in jsonMedia.findAll(html)) {
             normalize(match.groupValues[1])?.let { candidate ->
