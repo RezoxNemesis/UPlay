@@ -1,6 +1,7 @@
 package com.uplay.video
 
 import android.app.Activity
+import android.app.DownloadManager
 import android.content.Context
 import android.Manifest
 import android.content.ContentUris
@@ -9,6 +10,7 @@ import android.content.pm.PackageManager
 import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Environment
 import android.os.CancellationSignal
 import android.util.Size
 import android.util.LruCache
@@ -126,6 +128,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -873,9 +878,19 @@ private fun UPlayHome(
                                         (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                         !parsed.host.isNullOrBlank()
                                     if (validUrl && isInstagramPostUrl(candidate)) {
-                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
-                                            .onSuccess { message = "Opened Instagram. A post link is not a direct video file; UPlay can play supported direct media URLs you have permission to use." }
-                                            .onFailure { message = "Couldn’t open Instagram. Try opening the post in your browser." }
+                                        uiScope.launch {
+                                            message = "Checking public Instagram media…"
+                                            val mediaUrl = runCatching { resolvePublicInstagramVideoUrl(candidate) }.getOrNull()
+                                            if (mediaUrl != null) {
+                                                runCatching { queuePublicMediaDownload(context, mediaUrl, "Instagram video") }
+                                                    .onSuccess { message = "Instagram download queued. Check Downloads when it finishes." }
+                                                    .onFailure { message = "Couldn't start the download. Try opening the post instead." }
+                                            } else {
+                                                message = "Instagram didn't expose a public video file. Opening the post instead."
+                                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
+                                                    .onFailure { message = "Couldn't open Instagram. Try your browser." }
+                                            }
+                                        }
                                     } else if (validUrl) {
                                         onPlayUrl(candidate)
                                         selected = true
@@ -896,7 +911,7 @@ private fun UPlayHome(
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(5.dp))
-                                Text(if (isInstagramPostUrl(url.trim())) "Open Instagram" else "Play link", fontWeight = FontWeight.Bold)
+                                Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link"", fontWeight = FontWeight.Bold)
                             }
                         }
                         OutlinedButton(
@@ -1275,9 +1290,19 @@ private fun UPlayHome(
                                     (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                     !parsed.host.isNullOrBlank()
                                 if (validUrl && isInstagramPostUrl(candidate)) {
-                                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
-                                        .onSuccess { message = "Opened Instagram. A post link is not a direct video file; UPlay can play supported direct media URLs you have permission to use." }
-                                        .onFailure { message = "Couldn’t open Instagram. Try opening the post in your browser." }
+                                    uiScope.launch {
+                                        message = "Checking public Instagram media…"
+                                        val mediaUrl = runCatching { resolvePublicInstagramVideoUrl(candidate) }.getOrNull()
+                                        if (mediaUrl != null) {
+                                            runCatching { queuePublicMediaDownload(context, mediaUrl, "Instagram video") }
+                                                .onSuccess { message = "Instagram download queued. Check Downloads when it finishes." }
+                                                .onFailure { message = "Couldn't start the download. Try opening the post instead." }
+                                        } else {
+                                            message = "Instagram didn't expose a public video file. Opening the post instead."
+                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
+                                                .onFailure { message = "Couldn't open Instagram. Try your browser." }
+                                        }
+                                    }
                                 } else if (validUrl) {
                                     onPlayUrl(candidate)
                                     selected = true
@@ -1298,7 +1323,7 @@ private fun UPlayHome(
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text(if (isInstagramPostUrl(url.trim())) "Open Instagram" else "Play link", fontWeight = FontWeight.SemiBold)
+                            Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link"", fontWeight = FontWeight.SemiBold)
                         }
                     }
                     Spacer(Modifier.height(22.dp))
@@ -1809,6 +1834,75 @@ private fun extractSharedUrl(intent: Intent?): String? {
                 !uri.host.isNullOrBlank()
         }
     }.getOrNull()
+}
+
+private suspend fun resolvePublicInstagramVideoUrl(postUrl: String): String? = withContext(Dispatchers.IO) {
+    val connection = (URL(postUrl).openConnection() as? HttpURLConnection) ?: return@withContext null
+    try {
+        connection.instanceFollowRedirects = true
+        connection.connectTimeout = 8_000
+        connection.readTimeout = 8_000
+        connection.requestMethod = "GET"
+        connection.setRequestProperty("Accept", "text/html")
+        // No account cookies, credentials, proxies, or access-control workarounds are used.
+        if (connection.responseCode !in 200..299) return@withContext null
+        val html = connection.inputStream.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            val limit = 1_500_000
+            while (total < limit) {
+                val count = input.read(buffer, 0, minOf(buffer.size, limit - total))
+                if (count <= 0) break
+                output.write(buffer, 0, count)
+                total += count
+            }
+            output.toString("UTF-8")
+        }
+        val propertyRegex = Regex("""(?:property|name)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        val contentRegex = Regex("""content\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        val videoKeys = setOf("og:video", "og:video:secure_url", "og:video:url")
+        val rawMediaUrl = Regex("""<meta\b[^>]*>""", RegexOption.IGNORE_CASE)
+            .findAll(html)
+            .firstNotNullOfOrNull { match ->
+                val tag = match.value
+                val property = propertyRegex.find(tag)?.groupValues?.getOrNull(1)?.lowercase()
+                if (property in videoKeys) contentRegex.find(tag)?.groupValues?.getOrNull(1) else null
+            } ?: return@withContext null
+        val decoded = rawMediaUrl
+            .replace("&amp;", "&", ignoreCase = true)
+            .replace("\\/", "/")
+            .replace("\\u0026", "&", ignoreCase = true)
+            .replace("&#x26;", "&", ignoreCase = true)
+        val mediaUri = Uri.parse(decoded)
+        val mediaHost = mediaUri.host.orEmpty().lowercase()
+        decoded.takeIf {
+            mediaUri.scheme.equals("https", ignoreCase = true) &&
+                (mediaHost.endsWith("cdninstagram.com") || mediaHost.endsWith("fbcdn.net"))
+        }
+    } catch (_: Exception) {
+        null
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun queuePublicMediaDownload(context: Context, mediaUrl: String, title: String): Long {
+    val mediaUri = Uri.parse(mediaUrl)
+    require(mediaUri.scheme.equals("https", ignoreCase = true))
+    val filename = "UPlay_Instagram_" + java.lang.System.currentTimeMillis() + ".mp4"
+    val request = DownloadManager.Request(mediaUri)
+        .setTitle(title)
+        .setDescription("Saving publicly accessible Instagram media")
+        .setMimeType("video/mp4")
+        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+    if (Build.VERSION.SDK_INT >= 29) {
+        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
+    } else {
+        request.setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, filename)
+    }
+    val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+    return manager.enqueue(request)
 }
 
 private fun isInstagramPostUrl(candidate: String): Boolean = runCatching {
