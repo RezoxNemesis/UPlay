@@ -7,9 +7,9 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
-import com.yausername.ffmpeg.FFmpeg
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
+import dev.ffmpegkit_maintained.ytdlp.DownloadProgressCallback
+import dev.ffmpegkit_maintained.ytdlp.YtDlp
+import dev.ffmpegkit_maintained.ytdlp.YtDlpRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -33,8 +33,7 @@ class UniversalDownloadEngine(context: Context) {
         if (initialized) return@withContext
         synchronized(this@UniversalDownloadEngine) {
             if (initialized) return@synchronized
-            YoutubeDL.getInstance().init(appContext)
-            runCatching { FFmpeg.getInstance().init(appContext) }
+            YtDlp.init(appContext)
             initialized = true
         }
     }
@@ -55,24 +54,15 @@ class UniversalDownloadEngine(context: Context) {
 
         val startedAt = System.currentTimeMillis()
         val outputTemplate = File(workDir, "uplay_\${startedAt}_%(title).100B_[%(id)s].%(ext)s").absolutePath
-        val request = YoutubeDLRequest(url).apply {
-            addOption("-o", outputTemplate)
+        val request = YtDlpRequest(url).setOutputTemplate(outputTemplate).apply {
             addOption("--no-playlist")
             addOption("--newline")
-            addOption("--no-warnings")
-            addOption("--retries", "6")
-            addOption("--fragment-retries", "12")
-            addOption("--extractor-retries", "4")
-            addOption("--file-access-retries", "3")
-            addOption("--socket-timeout", "25")
-            addOption("--concurrent-fragments", "4")
-            addOption("-f", "bv*+ba/b")
-            addOption("--merge-output-format", "mp4")
-            addOption("--no-mtime")
+            // Select one complete media format; no external merger is assumed.
+            addOption("-f", "best")
         }
 
         onProgress(0f, "Finding available video streams…")
-        YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
+        val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, line ->
             val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 100f) else 0f
             val status = when {
                 safeProgress > 0f -> "Downloading \${safeProgress.roundToInt()}%" +
@@ -81,7 +71,9 @@ class UniversalDownloadEngine(context: Context) {
                 else -> "Resolving media source…"
             }
             onProgress(safeProgress, status)
-            kotlin.Unit
+        })
+        if (!response.isSuccess) {
+            throw IllegalStateException(response.errorOutput.ifBlank { "The media extractor returned exit code \${response.exitCode}." })
         }
 
         val prefix = "uplay_\${startedAt}_"
@@ -90,10 +82,6 @@ class UniversalDownloadEngine(context: Context) {
             ?.maxByOrNull { it.lastModified() }
             ?: throw IllegalStateException("The extractor finished but no completed media file was found.")
         publishToDownloads(completed)
-    }
-
-    fun cancel(processId: String) {
-        runCatching { YoutubeDL.getInstance().destroyProcessById(processId) }
     }
 
     private fun publishToDownloads(file: File): Uri {
