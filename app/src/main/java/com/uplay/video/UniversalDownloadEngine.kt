@@ -10,6 +10,8 @@ import android.webkit.MimeTypeMap
 import dev.ffmpegkit_maintained.ytdlp.DownloadProgressCallback
 import dev.ffmpegkit_maintained.ytdlp.YtDlp
 import dev.ffmpegkit_maintained.ytdlp.YtDlpRequest
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -57,43 +59,48 @@ class UniversalDownloadEngine(context: Context) {
         }
 
         val startedAt = System.currentTimeMillis()
-        val outputTemplate = File(workDir, "uplay_${startedAt}_%(title).100B_[%(id)s].%(ext)s").absolutePath
-        val request = YtDlpRequest(url).setOutputTemplate(outputTemplate).apply {
-            addOption("--no-playlist")
-            addOption("--newline")
-            // Select one complete media format; no external merger is assumed.
-            addOption("-f", "best")
-        }
-
         val prefix = "uplay_${startedAt}_"
         var extractionFailure: Exception? = null
-        val extractedUri = try {
-            onProgress(0f, "Finding available video streams…")
-            val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, line ->
-                val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 100f) else 0f
-                val status = when {
-                    safeProgress > 0f -> "Downloading ${safeProgress.roundToInt()}%" +
-                        if (eta > 0L) " · about ${eta}s left" else ""
-                    line.isNotBlank() -> line.take(140)
-                    else -> "Resolving media source…"
-                }
-                onProgress(safeProgress, status)
-            })
-            if (!response.isSuccess) {
-                throw IllegalStateException(response.errorOutput.ifBlank { "The media extractor returned exit code ${response.exitCode}." })
+
+        val mergedUri = try {
+            onProgress(0f, "Finding separate video and audio streams…")
+            val videoFile = downloadFormat(url, startedAt, "video", "bestvideo", 0f, 0.48f, onProgress)
+            val audioFile = downloadFormat(url, startedAt, "audio", "bestaudio", 0.48f, 0.48f, onProgress)
+            val mp4CompatibleVideo = videoFile.extension.lowercase() in setOf("mp4", "m4v", "mov")
+            val mp4CompatibleAudio = audioFile.extension.lowercase() in setOf("m4a", "mp4", "aac")
+            val container = if (mp4CompatibleVideo && mp4CompatibleAudio) "mp4" else "mkv"
+            val merged = File(workDir, "uplay_${startedAt}_merged.$container")
+            val command = "-y -i \\"${videoFile.absolutePath}\\" -i \\"${audioFile.absolutePath}\\" -c copy" +
+                (if (container == "mp4") " -movflags +faststart" else "") +
+                " \\"${merged.absolutePath}\\""
+            val session = FFmpegKit.execute(command)
+            if (!ReturnCode.isSuccess(session.returnCode) || !merged.exists() || merged.length() == 0L) {
+                throw IllegalStateException("The selected video and audio streams couldn't be combined.")
             }
-            val completed = workDir.listFiles()
-                ?.filter { it.isFile && it.name.startsWith(prefix) && !it.name.endsWith(".part") && it.length() > 0L }
-                ?.maxByOrNull { it.lastModified() }
-                ?: throw IllegalStateException("The extractor finished but no completed media file was found.")
-            publishToDownloads(completed)
+            runCatching { videoFile.delete() }
+            runCatching { audioFile.delete() }
+            onProgress(98f, "Finalizing downloaded video…")
+            publishToDownloads(merged)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             extractionFailure = error
             null
         }
-        if (extractedUri != null) return@withContext extractedUri
+        if (mergedUri != null) return@withContext mergedUri
+
+        // A single-file format is a compatibility fallback for sources without separable tracks.
+        workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
+        val singleUri = try {
+            val singleFile = downloadFormat(url, startedAt, "single", "best", 0f, 0.95f, onProgress)
+            publishToDownloads(singleFile)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            extractionFailure = error
+            null
+        }
+        if (singleUri != null) return@withContext singleUri
 
         onProgress(0f, "Trying direct-file recovery…")
         val directFile = runCatching { downloadDirectMedia(url, startedAt, onProgress) }.getOrNull()
@@ -104,11 +111,41 @@ class UniversalDownloadEngine(context: Context) {
         )
     }
 
-    /**
-     * Last-resort path for genuine direct media URLs. It rejects HTML pages and
-     * manifests, resumes partial files with HTTP Range when supported, and retries
-     * transient network interruptions without treating a post page as a video.
-     */
+    private fun downloadFormat(
+        url: String,
+        startedAt: Long,
+        label: String,
+        format: String,
+        progressStart: Float,
+        progressScale: Float,
+        onProgress: (Float, String) -> Unit
+    ): File {
+        val prefix = "uplay_${startedAt}_${label}_"
+        val template = File(workDir, "${prefix}%(title).100B_[%(id)s].%(ext)s").absolutePath
+        val request = YtDlpRequest(url).setOutputTemplate(template).apply {
+            addOption("--no-playlist")
+            addOption("--newline")
+            addOption("--restrict-filenames")
+            addOption("-f", format)
+        }
+        val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, _ ->
+            val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 100f) else 0f
+            val combinedProgress = (progressStart + safeProgress * progressScale).coerceIn(0f, 99f)
+            val status = when {
+                safeProgress > 0f -> "Downloading $label stream: ${safeProgress.roundToInt()}%" +
+                    if (eta > 0L) " · about ${eta}s left" else ""
+                else -> "Resolving $label stream…"
+            }
+            onProgress(combinedProgress, status)
+        })
+        if (!response.isSuccess) {
+            throw IllegalStateException(response.errorOutput.ifBlank { "No compatible $format stream was found." })
+        }
+        return workDir.listFiles()
+            ?.filter { it.isFile && it.name.startsWith(prefix) && !it.name.endsWith(".part") && it.length() > 0L }
+            ?.maxByOrNull { it.lastModified() }
+            ?: throw IllegalStateException("The $label stream did not produce a complete file.")
+    }
     private fun downloadDirectMedia(
         rawUrl: String,
         startedAt: Long,
