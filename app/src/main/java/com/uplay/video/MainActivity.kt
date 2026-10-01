@@ -152,6 +152,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -316,6 +317,7 @@ private fun UPlayHome(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val uiScope = rememberCoroutineScope()
+    val lastProgressUpdateAt = remember { AtomicLong(0L) }
     var instagramLoginOpen by remember { mutableStateOf(false) }
     var instagramSessionReady by remember { mutableStateOf(downloadEngine.hasInstagramSession()) }
     LaunchedEffect(url) {
@@ -558,6 +560,7 @@ private fun UPlayHome(
         if (downloadBusy) return
         downloadBusy = true
         downloadProgress = 0f
+        lastProgressUpdateAt.set(0L)
         if (downloadPreviewTitle == null) downloadPreviewTitle = "Identifying ${parsed?.host.orEmpty()}…"
         message = when {
             playAfterDownload -> "Resolving the video link for playback…"
@@ -568,9 +571,16 @@ private fun UPlayHome(
         uiScope.launch {
             try {
                 val downloadedUri = downloadEngine.download(normalizedCandidate, downloadQuality) { percent, status ->
-                    uiScope.launch {
-                        downloadProgress = (percent / 100f).coerceIn(0f, 1f)
-                        if (status.isNotBlank()) message = status
+                    // Extractors can emit many progress events per second. Coalesce UI updates
+                    // so large downloads don't queue thousands of main-thread coroutines.
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val previous = lastProgressUpdateAt.get()
+                    if ((now - previous >= 250L || percent >= 98f) &&
+                        lastProgressUpdateAt.compareAndSet(previous, now)) {
+                        uiScope.launch {
+                            downloadProgress = (percent / 100f).coerceIn(0f, 1f)
+                            if (status.isNotBlank()) message = status
+                        }
                     }
                 }
                 if (playAfterDownload) {
