@@ -60,6 +60,8 @@ class UniversalDownloadEngine(context: Context) {
 
         val startedAt = System.currentTimeMillis()
         val prefix = "uplay_${startedAt}_"
+        val host = parsed.host.orEmpty().lowercase()
+        val isInstagramSource = host == "instagram.com" || host.endsWith(".instagram.com")
         var extractionFailure: Exception? = null
 
         val mergedUri = try {
@@ -88,6 +90,24 @@ class UniversalDownloadEngine(context: Context) {
             null
         }
         if (mergedUri != null) return@withContext mergedUri
+
+        // Public Instagram pages sometimes serve a different format to mobile browsers.
+        if (isInstagramSource) {
+            workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
+            val mobileUri = try {
+                val mobileFile = downloadFormat(
+                    url, startedAt, "instagram_mobile", "best", 0f, 0.95f, onProgress,
+                    userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+                )
+                publishToDownloads(mobileFile)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                extractionFailure = error
+                null
+            }
+            if (mobileUri != null) return@withContext mobileUri
+        }
 
         // A single-file format is a compatibility fallback for sources without separable tracks.
         workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
@@ -118,7 +138,8 @@ class UniversalDownloadEngine(context: Context) {
         format: String,
         progressStart: Float,
         progressScale: Float,
-        onProgress: (Float, String) -> Unit
+        onProgress: (Float, String) -> Unit,
+        userAgent: String? = null
     ): File {
         val prefix = "uplay_${startedAt}_${label}_"
         val template = File(workDir, "${prefix}%(title).100B_[%(id)s].%(ext)s").absolutePath
@@ -126,6 +147,7 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--no-playlist")
             addOption("--newline")
             addOption("--restrict-filenames")
+            if (userAgent != null) addOption("--user-agent", userAgent)
             addOption("-f", format)
         }
         val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, _ ->
