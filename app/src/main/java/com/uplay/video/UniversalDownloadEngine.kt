@@ -191,7 +191,6 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--socket-timeout", "30")
             addOption("--force-ipv4")
             addOption("--retry-sleep", "http:1:3")
-            addOption("--fragment-retries", "5")
             if (url.contains("instagram.com", ignoreCase = true)) {
                 addOption("--add-headers", "Referer:https://www.instagram.com/")
             }
@@ -275,7 +274,7 @@ class UniversalDownloadEngine(context: Context) {
                 )
                 if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
                 val code = connection.responseCode
-                if (code == HttpURLConnection.HTTP_REQUESTED_RANGE_NOT_SATISFIABLE && existing > 0L) {
+                if (code == 416 && existing > 0L) {
                     val total = connection.getHeaderField("Content-Range")
                         ?.substringAfterLast("/", "")?.toLongOrNull()
                     if (total != null && total == existing && part.length() == total) {
