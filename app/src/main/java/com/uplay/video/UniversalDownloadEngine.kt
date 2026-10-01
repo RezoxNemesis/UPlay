@@ -432,8 +432,8 @@ class UniversalDownloadEngine(context: Context) {
             // A browser-like UA and same-site Referer improve compatibility with public
             // extractors that reject bare library requests. These headers never grant access.
             addOption("--user-agent", userAgent ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
-            addOption("--add-headers", "Referer:${if (instagramSource) "https://www.instagram.com/" else sourceOrigin}")
-            addOption("--add-headers", "Accept-Language:en-US,en;q=0.9")
+            addOption("--add-header", "Referer:${if (instagramSource) "https://www.instagram.com/" else sourceOrigin}")
+            addOption("--add-header", "Accept-Language:en-US,en;q=0.9")
             if (instagramSource && hasInstagramSession()) {
                 addOption("--cookies", instagramCookiesFile.absolutePath)
             }
