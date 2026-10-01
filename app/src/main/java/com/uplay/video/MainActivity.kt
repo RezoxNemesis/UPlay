@@ -74,6 +74,7 @@ import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.DarkMode
@@ -951,6 +952,13 @@ private fun UPlayHome(
                                                         locked = true
                                                         message = "Player controls locked."
                                                     }
+                                                    7 -> { if (player?.isPlaying == true) player.pause() else player?.play() }
+                                                    8 -> player?.let { it.seekTo((it.currentPosition - 10_000L).coerceAtLeast(0L)) }
+                                                    9 -> player?.let { it.seekTo((it.currentPosition + 10_000L).coerceAtMost(it.duration.coerceAtLeast(0L))) }
+                                                    10 -> player?.let { active -> active.volume = if (active.volume > 0f) 0f else 1f }
+                                                    11 -> trackDialog = 2
+                                                    12 -> trackDialog = 1
+                                                    13 -> fullScreen = !fullScreen
                                                 }
                                             }
                                         )
@@ -1851,15 +1859,28 @@ private fun RotaryControlDial(
         animationSpec = tween(420, easing = FastOutSlowInEasing),
         label = "dial-gear-rotation"
     )
-    val actions = listOf(
-        Icons.Default.Forward10 to "Playback speed",
-        Icons.Default.FitScreen to "Screen framing",
-        Icons.Default.Subtitles to "Subtitles",
-        Icons.Default.FolderOpen to "Load subtitle file",
-        Icons.Default.GraphicEq to "Audio track",
-        Icons.Default.Replay10 to "Toggle repeat",
-        Icons.Default.Lock to "Lock controls"
+    val actionPages = listOf(
+        listOf(
+            Icons.Default.Forward10 to "Playback speed",
+            Icons.Default.FitScreen to "Screen framing",
+            Icons.Default.Subtitles to "Subtitles",
+            Icons.Default.FolderOpen to "Load subtitle file",
+            Icons.Default.GraphicEq to "Audio track",
+            Icons.Default.Replay10 to "Toggle repeat",
+            Icons.Default.Lock to "Lock controls"
+        ),
+        listOf(
+            Icons.Default.PlayArrow to "Play or pause",
+            Icons.Default.Replay10 to "Back 10 seconds",
+            Icons.Default.Forward10 to "Forward 10 seconds",
+            Icons.Default.VolumeUp to "Mute or unmute",
+            Icons.Default.Subtitles to "Subtitle tracks",
+            Icons.Default.GraphicEq to "Audio tracks",
+            Icons.Default.Fullscreen to "Toggle fullscreen"
+        )
     )
+    var actionPage by remember { mutableIntStateOf(0) }
+    val actions = actionPages[actionPage]
 
     Box(
         modifier = modifier.pointerInput(open) {
@@ -1887,7 +1908,16 @@ private fun RotaryControlDial(
                                 if (delta > 180f) delta -= 360f
                                 if (delta < -180f) delta += 360f
                                 dialScope.launch {
-                                    rotationAnim.snapTo(rotationAnim.value + delta)
+                                    val nextRotation = rotationAnim.value + delta
+                                    if (nextRotation >= 180f) {
+                                        actionPage = (actionPage + 1) % actionPages.size
+                                        rotationAnim.snapTo(nextRotation - 180f)
+                                    } else if (nextRotation <= -180f) {
+                                        actionPage = (actionPage + actionPages.size - 1) % actionPages.size
+                                        rotationAnim.snapTo(nextRotation + 180f)
+                                    } else {
+                                        rotationAnim.snapTo(nextRotation)
+                                    }
                                     val tick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
                                     if (tick != lastTick) {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1912,8 +1942,8 @@ private fun RotaryControlDial(
         }
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val center = Offset(size.width, 0f)
-            val radius = size.minDimension * 0.70f
+            val radius = size.minDimension * 0.68f
+            val center = Offset(size.width - 58.dp.toPx(), radius)
             if (unfold > 0.01f) {
                 drawCircle(
                     color = Color(0xFF8DD8FF).copy(alpha = 0.12f * unfold),
@@ -1922,7 +1952,7 @@ private fun RotaryControlDial(
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
                 )
                 for (tick in 0..48) {
-                    val angle = Math.toRadians((90f + tick * 90f / 48f).toDouble())
+                    val angle = Math.toRadians((90f + tick * 180f / 48f).toDouble())
                     val outer = radius
                     val inner = radius - if (tick % 4 == 0) 7.dp.toPx() else 3.dp.toPx()
                     drawLine(
@@ -1937,7 +1967,7 @@ private fun RotaryControlDial(
                 drawArc(
                     color = Color(0xFF8DD8FF).copy(alpha = 0.52f * unfold),
                     startAngle = 90f + rotation * 0.22f,
-                    sweepAngle = 90f,
+                    sweepAngle = 180f,
                     useCenter = false,
                     topLeft = Offset(center.x - radius, center.y - radius),
                     size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
@@ -1949,13 +1979,13 @@ private fun RotaryControlDial(
             }
         }
 
-        val radius = 164f * unfold
+        val controlRadius = 154f * unfold
         actions.forEachIndexed { index, item ->
             val angle = Math.toRadians(
-                (90f + index * (90f / (actions.size - 1)) + rotation * 0.22f + closingSweep * 0.25f).toDouble()
+                (240f - index * (120f / (actions.size - 1)) + rotation * 0.22f + closingSweep * 0.12f).toDouble()
             )
-            val x = (kotlin.math.cos(angle) * radius).toFloat().dp
-            val y = (kotlin.math.sin(angle) * radius).toFloat().dp
+            val x = (-36f + kotlin.math.cos(angle) * controlRadius).dp
+            val y = (controlRadius + kotlin.math.sin(angle) * controlRadius - 22f).dp
             RadialControl(
                 icon = item.first,
                 label = item.second,
@@ -1974,8 +2004,8 @@ private fun RotaryControlDial(
 
         Surface(
             onClick = {
-                dialView.playSoundEffect(SoundEffectConstants.CLICK)
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                dialView.playSoundEffect(SoundEffectConstants.CLICK)
                 onToggle()
             },
             shape = CircleShape,
