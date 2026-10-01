@@ -880,6 +880,53 @@ private fun UPlayHome(
                                             }
                                         }
                                     }
+                                    RotaryControlDial(
+                                        open = radialOpen,
+                                        onToggle = { radialOpen = !radialOpen },
+                                        modifier = Modifier.align(Alignment.TopEnd).offset(x = 92.dp).padding(top = 8.dp).size(240.dp),
+                                        onAction = { action ->
+                                            radialOpen = false
+                                            controlsVisible = true
+                                            when (action) {
+                                                0 -> {
+                                                    val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+                                                    val index = speeds.indexOfFirst { it == playbackSpeed }.coerceAtLeast(0)
+                                                    playbackSpeed = speeds[(index + 1) % speeds.size]
+                                                    player.setPlaybackSpeed(playbackSpeed)
+                                                    playerPreferences.edit().putFloat("playback_speed", playbackSpeed).apply()
+                                                    message = "Playback speed: ${playbackSpeed}×"
+                                                }
+                                                1 -> message = "Screen framing controls apply to video playback."
+                                                2, 11 -> trackDialog = 2
+                                                3 -> subtitlePicker.launch(arrayOf("text/*", "application/x-subrip", "application/ttml+xml"))
+                                                4, 12 -> trackDialog = 1
+                                                5, 16 -> {
+                                                    val repeat = player.repeatMode != Player.REPEAT_MODE_ONE
+                                                    player.repeatMode = if (repeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                                                    playerPreferences.edit().putBoolean("repeat_video", repeat).apply()
+                                                    message = if (repeat) "Repeat enabled" else "Repeat disabled"
+                                                }
+                                                6 -> {
+                                                    locked = true
+                                                    message = "Player controls locked."
+                                                }
+                                                7 -> if (player.isPlaying) player.pause() else player.play()
+                                                8 -> player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                                9 -> player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L)))
+                                                10 -> player.volume = if (player.volume > 0f) 0f else 1f
+                                                13, 17 -> fullScreen = !fullScreen
+                                                14 -> {
+                                                    val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+                                                    val index = speeds.indexOfFirst { it == playbackSpeed }.coerceAtLeast(0)
+                                                    playbackSpeed = speeds[(index - 1 + speeds.size) % speeds.size]
+                                                    player.setPlaybackSpeed(playbackSpeed)
+                                                    playerPreferences.edit().putFloat("playback_speed", playbackSpeed).apply()
+                                                    message = "Playback speed: ${playbackSpeed}×"
+                                                }
+                                                15 -> player.seekTo(0L)
+                                            }
+                                        }
+                                    )
                                 }
                             } else AndroidView(
                                 factory = { viewContext ->
