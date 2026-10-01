@@ -278,19 +278,19 @@ class UniversalDownloadEngine(context: Context) {
             connection.disconnect()
         }
 
-        val videoMetaTags = Regex("""<meta\\b[^>]*>""", RegexOption.IGNORE_CASE)
+        val videoMetaTags = Regex("""<meta\b[^>]*>""", RegexOption.IGNORE_CASE)
         for (tagMatch in videoMetaTags.findAll(html)) {
             val tag = tagMatch.value
-            val property = Regex("""(?:property|name)\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val property = Regex("""(?:property|name)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
                 .find(tag)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
             if (property !in setOf("og:video", "og:video:url", "og:video:secure_url", "twitter:player:stream")) continue
-            val content = Regex("""content\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val content = Regex("""content\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
                 .find(tag)?.groupValues?.getOrNull(1) ?: continue
             val candidate = content
                 .replace("&amp;", "&", ignoreCase = true)
                 .replace("&#x26;", "&", ignoreCase = true)
-                .replace("\\\\/", "/")
-                .replace("\\\\u0026", "&", ignoreCase = true)
+                .replace("\\/", "/")
+                .replace("\\u0026", "&", ignoreCase = true)
             val parsed = runCatching { Uri.parse(candidate) }.getOrNull() ?: continue
             if ((parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                 !parsed.host.isNullOrBlank()) return candidate
