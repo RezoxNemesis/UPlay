@@ -391,6 +391,8 @@ private fun UPlayHome(
                                 settings.loadWithOverviewMode = true
                                 settings.mediaPlaybackRequiresUserGesture = false
                                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                                val isInstagram = siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")
+                                var mobileLoginFallbackTried = false
                                 webChromeClient = WebChromeClient()
                                 webViewClient = object : WebViewClient() {
                                     override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
@@ -402,10 +404,18 @@ private fun UPlayHome(
                                             "(document.body && document.body.innerText ? document.body.innerText.trim().length : 0).toString()"
                                         ) { rawLength ->
                                             val hasPageText = rawLength.orEmpty().trim('"').toIntOrNull()?.let { it > 0 } == true
-                                            instagramWebStatus = when {
-                                                !hasPageText -> "${siteSessionHost.removePrefix("www.")} returned a blank page. Try Open browser, or reload this page."
-                                                pageUrl.orEmpty().contains("/accounts/login") -> "Sign in above, then tap Use session."
-                                                else -> "Page loaded. Sign in if needed, then tap Use session."
+                                            if (!hasPageText && isInstagram &&
+                                                !mobileLoginFallbackTried &&
+                                                pageUrl.orEmpty().contains("www.instagram.com", ignoreCase = true)) {
+                                                mobileLoginFallbackTried = true
+                                                instagramWebStatus = "Instagram returned a blank sign-in page; trying its mobile sign-in page…"
+                                                view?.loadUrl("https://m.instagram.com/accounts/login/")
+                                            } else {
+                                                instagramWebStatus = when {
+                                                    !hasPageText -> "${siteSessionHost.removePrefix("www.")} returned a blank page. Try reopening the sign-in window."
+                                                    pageUrl.orEmpty().contains("/accounts/login") -> "Sign in above, then tap Use session."
+                                                    else -> "Page loaded. Sign in if needed, then tap Use session."
+                                                }
                                             }
                                         }
                                     }
@@ -427,7 +437,6 @@ private fun UPlayHome(
                                         }
                                     }
                                 }
-                                val isInstagram = siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")
                                 loadUrl(if (isInstagram) "https://www.instagram.com/accounts/login/" else "https://$siteSessionHost/")
                             }
                         },
