@@ -74,7 +74,11 @@ class UniversalDownloadEngine(context: Context) {
             else -> null
         }
         val videoFormat = maxHeight?.let { "bestvideo[height<=?$it]" } ?: "bestvideo"
-        val singleFormat = maxHeight?.let { "best[height<=?$it]" } ?: "best"
+        // Prefer separate high-quality streams, but allow yt-dlp to merge them when
+        // the source has no pre-muxed format (common on social-video extractors).
+        val singleFormat = maxHeight?.let {
+            "bestvideo[height<=?$it]+bestaudio/best[height<=?$it]"
+        } ?: "bestvideo+bestaudio/best"
         var extractionFailure: Exception? = null
 
         val mergedUri = try {
@@ -162,11 +166,12 @@ class UniversalDownloadEngine(context: Context) {
             .replace(Regex("\\u001B\\[[;\\d]*m"), "")
             .lineSequence().map(String::trim).filter(String::isNotBlank).lastOrNull().orEmpty()
         val detail = when {
-            isInstagramSource -> "Instagram did not expose a downloadable public media stream. Try a public Reel URL in a browser; private, login-gated, expired, or restricted media may not be available to UPlay."
-            extractorDetail.contains("Unsupported URL", true) -> "This link format is not supported by the current extractor. Try the direct media link or update UPlay's downloader."
             extractorDetail.contains("HTTP Error 403", true) || extractorDetail.contains("Forbidden", true) -> "The source refused the download request (HTTP 403). The media may require access UPlay does not have."
             extractorDetail.contains("HTTP Error 429", true) || extractorDetail.contains("Too Many Requests", true) -> "The source is rate-limiting downloads. Wait a while and retry."
-            extractorDetail.contains("Sign in", true) || extractorDetail.contains("login", true) -> "This source requires a signed-in session that UPlay does not currently have."
+            extractorDetail.contains("Sign in", true) || extractorDetail.contains("login", true) || extractorDetail.contains("checkpoint", true) -> "This source requires a signed-in session or verification that UPlay does not currently have."
+            extractorDetail.contains("Unsupported URL", true) -> "This link format is not supported by the current extractor. Try the canonical post/Reel share link or update UPlay's downloader."
+            isInstagramSource && extractorDetail.isNotBlank() -> "Instagram extraction failed: ${extractorDetail.take(180)}. Publicly visible posts may still be unavailable to an independent downloader."
+            isInstagramSource -> "Instagram did not expose a downloadable public media stream. Try the canonical Reel/post share link; private, login-gated, expired, or restricted media may not be available to UPlay."
             extractorDetail.isNotBlank() -> extractorDetail.take(220)
             directFailure?.message?.isNotBlank() == true -> "Direct-media recovery failed: ${directFailure?.message?.take(180)}"
             else -> "No complete downloadable media stream was found. The page may not expose a public media file."
@@ -196,6 +201,7 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--file-access-retries", "3")
             addOption("--socket-timeout", "30")
             addOption("--force-ipv4")
+            addOption("--format-sort", "res,ext:mp4:m4a")
             addOption("--retry-sleep", "http:1:3")
             if (url.contains("instagram.com", ignoreCase = true)) {
                 addOption("--add-headers", "Referer:https://www.instagram.com/")
