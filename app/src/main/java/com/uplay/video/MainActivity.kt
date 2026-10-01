@@ -11,6 +11,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.CancellationSignal
 import android.util.Size
+import android.util.LruCache
 import android.content.res.Configuration
 import android.content.Intent
 import android.provider.OpenableColumns
@@ -1009,7 +1010,7 @@ private fun UPlayHome(
                                     Spacer(Modifier.width(7.dp))
                                     Text(label, color = if (libraryMode == index) Color(0xFF102033) else secondaryText, fontWeight = FontWeight.SemiBold)
                                     Spacer(Modifier.width(5.dp))
-                                    Text((if (index == 0) (deviceVideos.size + recentVideos.size) else (deviceAudios.size + recentAudios.size)).toString(),
+                                    Text((if (index == 0) (deviceVideos + recentVideos).distinctBy { it.uri }.size else (deviceAudios + recentAudios).distinctBy { it.uri }.size).toString(),
                                         color = if (libraryMode == index) Color(0xFF102033) else secondaryText, fontSize = 11.sp)
                                 }
                             }
@@ -1938,16 +1939,22 @@ private fun formatBytes(bytes: Long): String = when {
     else -> "${bytes} B"
 }
 
+private val mediaThumbnailCache = object : LruCache<String, Bitmap>(12 * 1024) {
+    override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
+}
+
 @Composable
 private fun MediaThumbnail(uri: String, title: String, isMusic: Boolean, dark: Boolean) {
     val context = LocalContext.current
-    val bitmap by androidx.compose.runtime.produceState<Bitmap?>(initialValue = null, uri) {
-        value = withContext(Dispatchers.IO) {
-            if (Build.VERSION.SDK_INT >= 29 && uri.startsWith("content://") && !isMusic) {
-                runCatching {
-                    context.contentResolver.loadThumbnail(Uri.parse(uri), Size(320, 180), CancellationSignal())
-                }.getOrNull()
-            } else null
+    val bitmap by androidx.compose.runtime.produceState<Bitmap?>(initialValue = mediaThumbnailCache.get(uri), uri) {
+        if (value == null) {
+            value = withContext(Dispatchers.IO) {
+                mediaThumbnailCache.get(uri) ?: if (Build.VERSION.SDK_INT >= 29 && uri.startsWith("content://") && !isMusic) {
+                    runCatching {
+                        context.contentResolver.loadThumbnail(Uri.parse(uri), Size(320, 180), CancellationSignal())
+                    }.getOrNull()?.also { loaded -> mediaThumbnailCache.put(uri, loaded) }
+                } else null
+            }
         }
     }
     Box(
