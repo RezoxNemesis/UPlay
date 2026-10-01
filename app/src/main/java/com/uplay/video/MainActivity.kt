@@ -59,6 +59,8 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -1712,6 +1714,7 @@ private fun SettingsActionRow(
 
 @Composable
 private fun MusicOrbitVisualizer(isPlaying: Boolean, modifier: Modifier = Modifier) {
+    val tickSound = rememberRotaryTickSound(LocalContext.current)
     val motion = rememberInfiniteTransition(label = "uplay-music-orbit")
     val rotation by motion.animateFloat(
         initialValue = 0f, targetValue = 360f,
@@ -1723,6 +1726,10 @@ private fun MusicOrbitVisualizer(isPlaying: Boolean, modifier: Modifier = Modifi
         animationSpec = infiniteRepeatable(tween(if (isPlaying) 900 else 1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "music-orbit-pulse"
     )
+    val soundDetent = (rotation / 30f).toInt()
+    LaunchedEffect(isPlaying, soundDetent) {
+        if (isPlaying && soundDetent > 0) tickSound()
+    }
     Canvas(modifier = modifier) {
         val center = Offset(size.width / 2f, size.height / 2f)
         val base = size.minDimension * 0.22f
@@ -1846,7 +1853,7 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
             .setMaxStreams(3)
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build()
             )
@@ -1909,89 +1916,81 @@ private fun RotaryControlDial(
     val rotationAnim = remember { Animatable(0f) }
     val rotation = rotationAnim.value
     val dialScope = rememberCoroutineScope()
-    val dialView = LocalView.current
-    val tickSound = rememberRotaryTickSound(dialView.context)
+    val tickSound = rememberRotaryTickSound(LocalContext.current)
     val haptic = LocalHapticFeedback.current
-    var lastTick by remember { mutableIntStateOf(0) }
+    var actionPage by remember { mutableIntStateOf(0) }
+    val actionCatalog = listOf(
+        Icons.Default.Forward10 to "Playback speed",
+        Icons.Default.FitScreen to "Screen framing",
+        Icons.Default.Subtitles to "Subtitles",
+        Icons.Default.FolderOpen to "Load subtitle file",
+        Icons.Default.GraphicEq to "Audio track",
+        Icons.Default.Replay10 to "Toggle repeat",
+        Icons.Default.Lock to "Lock controls",
+        Icons.Default.PlayArrow to "Play or pause",
+        Icons.Default.Replay10 to "Back 10 seconds",
+        Icons.Default.Forward10 to "Forward 10 seconds",
+        Icons.Default.VolumeUp to "Mute or unmute",
+        Icons.Default.Subtitles to "Subtitle tracks",
+        Icons.Default.GraphicEq to "Audio tracks",
+        Icons.Default.Fullscreen to "Toggle fullscreen"
+    )
+    val pageSize = 3
+    val pageCount = (actionCatalog.size + pageSize - 1) / pageSize
+    val actions = actionCatalog.drop(actionPage * pageSize).take(pageSize)
+    fun pageFor(degrees: Float): Int {
+        val page = kotlin.math.floor(degrees / 120f).toInt()
+        return ((page % pageCount) + pageCount) % pageCount
+    }
     val unfold by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
-        animationSpec = tween(420, easing = FastOutSlowInEasing),
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
         label = "dial-unfold"
     )
-    val closingSweep by animateFloatAsState(
-        targetValue = if (open) 0f else -105f,
-        animationSpec = tween(460, easing = FastOutSlowInEasing),
-        label = "dial-closing-sweep"
-    )
     val gearRotation by animateFloatAsState(
-        targetValue = if (open) 135f else 0f,
-        animationSpec = tween(420, easing = FastOutSlowInEasing),
+        targetValue = if (open) 180f else 0f,
+        animationSpec = tween(520, easing = FastOutSlowInEasing),
         label = "dial-gear-rotation"
     )
-    val actionPages = listOf(
-        listOf(
-            Icons.Default.Forward10 to "Playback speed",
-            Icons.Default.FitScreen to "Screen framing",
-            Icons.Default.Subtitles to "Subtitles",
-            Icons.Default.FolderOpen to "Load subtitle file",
-            Icons.Default.GraphicEq to "Audio track",
-            Icons.Default.Replay10 to "Toggle repeat",
-            Icons.Default.Lock to "Lock controls"
-        ),
-        listOf(
-            Icons.Default.PlayArrow to "Play or pause",
-            Icons.Default.Replay10 to "Back 10 seconds",
-            Icons.Default.Forward10 to "Forward 10 seconds",
-            Icons.Default.VolumeUp to "Mute or unmute",
-            Icons.Default.Subtitles to "Subtitle tracks",
-            Icons.Default.GraphicEq to "Audio tracks",
-            Icons.Default.Fullscreen to "Toggle fullscreen"
-        )
-    )
-    var actionPage by remember { mutableIntStateOf(0) }
-    val actions = actionPages[actionPage]
 
     Box(
         modifier = modifier.pointerInput(open) {
             if (open) {
                 var lastAngle = Float.NaN
+                var lastAngularDelta = 0f
+                var lastPage = pageFor(rotationAnim.value)
                 detectDragGestures(
                     onDragStart = { point ->
-                        val center = Offset(size.width.toFloat() - 58.dp.toPx(), minOf(size.width, size.height).toFloat() * 0.68f)
-                        lastTick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
-                        lastAngle = Math.toDegrees(
-                            kotlin.math.atan2(
-                                (point.y - center.y).toDouble(),
-                                (point.x - center.x).toDouble()
-                            )
-                        ).toFloat()
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        val dx = point.x - center.x
+                        val dy = point.y - center.y
+                        lastAngle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                        lastAngularDelta = 0f
+                        lastPage = pageFor(rotationAnim.value)
                     },
                     onDrag = { change, _ ->
-                        val center = Offset(size.width.toFloat() - 58.dp.toPx(), minOf(size.width, size.height).toFloat() * 0.68f)
+                        val center = Offset(size.width / 2f, size.height / 2f)
                         val dx = change.position.x - center.x
                         val dy = change.position.y - center.y
-                        if (dx * dx + dy * dy > 18.dp.toPx() * 18.dp.toPx()) {
+                        val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                        if (distance > 34.dp.toPx() && distance < size.minDimension * 0.58f) {
                             val angle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
                             if (!lastAngle.isNaN()) {
                                 var delta = angle - lastAngle
                                 if (delta > 180f) delta -= 360f
                                 if (delta < -180f) delta += 360f
-                                dialScope.launch {
-                                    val nextRotation = rotationAnim.value + delta
-                                    if (nextRotation >= 180f) {
-                                        actionPage = (actionPage + 1) % actionPages.size
-                                        rotationAnim.snapTo(nextRotation - 180f)
-                                    } else if (nextRotation <= -180f) {
-                                        actionPage = (actionPage + actionPages.size - 1) % actionPages.size
-                                        rotationAnim.snapTo(nextRotation + 180f)
-                                    } else {
-                                        rotationAnim.snapTo(nextRotation)
-                                    }
-                                    val tick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
-                                    if (tick != lastTick) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        tickSound()
-                                        lastTick = tick
+                                if (kotlin.math.abs(delta) < 75f) {
+                                    lastAngularDelta = delta
+                                    dialScope.launch {
+                                        val next = rotationAnim.value + delta
+                                        rotationAnim.snapTo(next)
+                                        val nextPage = pageFor(next)
+                                        if (nextPage != lastPage) {
+                                            actionPage = nextPage
+                                            lastPage = nextPage
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            tickSound()
+                                        }
                                     }
                                 }
                             }
@@ -2001,18 +2000,29 @@ private fun RotaryControlDial(
                     },
                     onDragEnd = {
                         dialScope.launch {
-                            val step = 360f / actions.size
-                            val detent = (rotationAnim.value / step).roundToInt() * step
-                            rotationAnim.animateTo(detent, tween(170, easing = FastOutSlowInEasing))
+                            if (kotlin.math.abs(lastAngularDelta) > 0.5f) {
+                                runCatching {
+                                    rotationAnim.animateDecay(
+                                        initialVelocity = lastAngularDelta * 18f,
+                                        animationSpec = exponentialDecay(frictionMultiplier = 2.8f)
+                                    )
+                                }
+                            }
+                            val detent = (rotationAnim.value / 120f).roundToInt() * 120f
+                            rotationAnim.animateTo(detent, spring(dampingRatio = 0.76f, stiffness = 360f))
+                            actionPage = pageFor(rotationAnim.value)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            tickSound()
                         }
                     }
                 )
             }
-        }
+        },
+        contentAlignment = Alignment.Center
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val radius = size.minDimension * 0.68f
-            val center = Offset(size.width - 58.dp.toPx(), radius)
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val radius = size.minDimension * 0.39f
             if (unfold > 0.01f) {
                 drawCircle(
                     color = Color(0xFF8DD8FF).copy(alpha = 0.12f * unfold),
@@ -2020,54 +2030,52 @@ private fun RotaryControlDial(
                     center = center,
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
                 )
-                for (tick in 0..48) {
-                    val angle = Math.toRadians((90f + tick * 180f / 48f).toDouble())
-                    val outer = radius
-                    val inner = radius - if (tick % 4 == 0) 7.dp.toPx() else 3.dp.toPx()
+                for (tick in 0 until 60) {
+                    val angle = Math.toRadians((tick * 6.0 + rotation).toDouble())
+                    val major = tick % 5 == 0
+                    val inner = radius - if (major) 8.dp.toPx() else 3.5.dp.toPx()
                     drawLine(
-                        color = Color(0xFF8DD8FF).copy(alpha = (if (tick % 4 == 0) 0.62f else 0.24f) * unfold),
+                        color = Color(0xFF8DD8FF).copy(alpha = (if (major) 0.72f else 0.25f) * unfold),
                         start = Offset(center.x + kotlin.math.cos(angle).toFloat() * inner,
                             center.y + kotlin.math.sin(angle).toFloat() * inner),
-                        end = Offset(center.x + kotlin.math.cos(angle).toFloat() * outer,
-                            center.y + kotlin.math.sin(angle).toFloat() * outer),
-                        strokeWidth = if (tick % 4 == 0) 1.5.dp.toPx() else 0.8.dp.toPx()
+                        end = Offset(center.x + kotlin.math.cos(angle).toFloat() * radius,
+                            center.y + kotlin.math.sin(angle).toFloat() * radius),
+                        strokeWidth = if (major) 1.6.dp.toPx() else 0.8.dp.toPx()
                     )
                 }
                 drawArc(
-                    color = Color(0xFF8DD8FF).copy(alpha = 0.52f * unfold),
-                    startAngle = 90f + rotation * 0.22f,
-                    sweepAngle = 180f,
+                    color = Color(0xFF8DD8FF).copy(alpha = 0.7f * unfold),
+                    startAngle = rotation - 90f,
+                    sweepAngle = 96f,
                     useCenter = false,
                     topLeft = Offset(center.x - radius, center.y - radius),
                     size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
                     style = androidx.compose.ui.graphics.drawscope.Stroke(
-                        width = 1.8.dp.toPx(),
+                        width = 2.dp.toPx(),
                         cap = androidx.compose.ui.graphics.StrokeCap.Round
                     )
                 )
             }
         }
 
-        val controlRadius = 154f * unfold
+        val controlRadius = 82f * unfold
         actions.forEachIndexed { index, item ->
-            val angle = Math.toRadians(
-                (240f - index * (120f / (actions.size - 1)) + rotation * 0.22f + closingSweep * 0.12f).toDouble()
-            )
-            val x = (-36f + kotlin.math.cos(angle) * controlRadius).dp
-            val y = (controlRadius + kotlin.math.sin(angle) * controlRadius - 22f).dp
+            val angle = Math.toRadians((-90f + index * 120f + rotation).toDouble())
+            val x = (kotlin.math.cos(angle) * controlRadius).dp
+            val y = (kotlin.math.sin(angle) * controlRadius).dp
             RadialControl(
                 icon = item.first,
                 label = item.second,
                 enabled = open,
-                modifier = Modifier.align(Alignment.TopEnd)
+                modifier = Modifier.align(Alignment.Center)
                     .offset(x = x, y = y)
                     .graphicsLayer {
                         alpha = unfold
-                        val scale = 0.38f + 0.62f * unfold
+                        val scale = 0.45f + 0.55f * unfold
                         scaleX = scale
                         scaleY = scale
                     },
-                onClick = { onAction(actionPage * actions.size + index) }
+                onClick = { onAction(actionPage * pageSize + index) }
             )
         }
 
@@ -2083,7 +2091,7 @@ private fun RotaryControlDial(
                 width = if (open) 1.5.dp else 1.dp,
                 color = Color(0xCC8DD8FF)
             ),
-            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(52.dp).graphicsLayer {
+            modifier = Modifier.align(Alignment.Center).size(52.dp).graphicsLayer {
                 rotationZ = gearRotation
                 shadowElevation = 14.dp.toPx()
             }
