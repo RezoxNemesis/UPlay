@@ -1803,7 +1803,7 @@ private fun RotaryControlDial(
                 var lastAngle = Float.NaN
                 detectDragGestures(
                     onDragStart = { point ->
-                        val center = Offset(size.width, 0f)
+                        val center = Offset(size.width.toFloat(), 0f)
                         lastTick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
                         lastAngle = Math.toDegrees(
                             kotlin.math.atan2(
@@ -1813,7 +1813,7 @@ private fun RotaryControlDial(
                         ).toFloat()
                     },
                     onDrag = { change, _ ->
-                        val center = Offset(size.width, 0f)
+                        val center = Offset(size.width.toFloat(), 0f)
                         val dx = change.position.x - center.x
                         val dy = change.position.y - center.y
                         if (dx * dx + dy * dy > 18.dp.toPx() * 18.dp.toPx()) {
