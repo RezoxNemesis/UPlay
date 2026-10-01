@@ -408,7 +408,7 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--force-ipv4")
             addOption("--format-sort", "res,ext:mp4:m4a")
             addOption("--retry-sleep", "http:1:3")
-            if (url.contains("instagram.com", ignoreCase = true)) {
+            if (isInstagramHost(Uri.parse(url).host.orEmpty())) {
                 addOption("--add-headers", "Referer:https://www.instagram.com/")
                 if (hasInstagramSession()) addOption("--cookies", instagramCookiesFile.absolutePath)
             }
