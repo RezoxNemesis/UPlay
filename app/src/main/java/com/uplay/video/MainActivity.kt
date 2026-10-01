@@ -758,12 +758,76 @@ private fun UPlayHome(
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                                        MusicOrbitVisualizer(isPlaying = isPlaying, modifier = Modifier.size(220.dp))
-                                        Text(player.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty().ifBlank { "Now playing" },
-                                            color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                                        Text(if (isPlaying) "SOUND IN MOTION" else "READY WHEN YOU ARE",
-                                            color = Color(0xFF8DD8FF), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.5.sp)
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp)
+                                    ) {
+                                        MusicOrbitVisualizer(isPlaying = isPlaying, modifier = Modifier.size(190.dp))
+                                        Text(
+                                            player.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty().ifBlank { "Now playing" },
+                                            color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
+                                            maxLines = 2
+                                        )
+                                        Text(
+                                            if (isPlaying) "SOUND IN MOTION" else "PAUSED",
+                                            color = Color(0xFF8DD8FF), fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold, letterSpacing = 2.5.sp
+                                        )
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(26.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            IconButton(
+                                                onClick = {
+                                                    player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                                    controlsVisible = true
+                                                },
+                                                modifier = Modifier.size(48.dp).background(Color(0x660D1725), CircleShape)
+                                            ) {
+                                                Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp))
+                                            }
+                                            IconButton(
+                                                onClick = {
+                                                    if (player.isPlaying) player.pause() else player.play()
+                                                    controlsVisible = true
+                                                },
+                                                modifier = Modifier.size(68.dp)
+                                                    .background(Brush.linearGradient(listOf(Color(0xFFB3F0FF), Color(0xFF62BFFF))), CircleShape)
+                                                    .border(1.dp, Color(0xAAE0FAFF), CircleShape)
+                                            ) {
+                                                Icon(
+                                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                    if (isPlaying) "Pause music" else "Play music",
+                                                    tint = Ink, modifier = Modifier.size(42.dp)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = {
+                                                    player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L)))
+                                                    controlsVisible = true
+                                                },
+                                                modifier = Modifier.size(48.dp).background(Color(0x660D1725), CircleShape)
+                                            ) {
+                                                Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp))
+                                            }
+                                        }
+                                        val musicDuration = player.duration.takeIf { it > 0L } ?: 0L
+                                        val musicPosition = player.currentPosition.coerceIn(0L, musicDuration.coerceAtLeast(1L))
+                                        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                                            Slider(
+                                                value = if (musicDuration > 0L) musicPosition.toFloat().coerceIn(0f, musicDuration.toFloat()) else 0f,
+                                                onValueChange = { value ->
+                                                    if (musicDuration > 0L) player.seekTo(value.toLong().coerceIn(0L, musicDuration))
+                                                },
+                                                valueRange = 0f..musicDuration.toFloat().coerceAtLeast(1f),
+                                                enabled = musicDuration > 0L
+                                            )
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Text(formatTime(musicPosition), color = Color.White, fontSize = 11.sp)
+                                                Text(formatTime(musicDuration), color = Color.White, fontSize = 11.sp)
+                                            }
+                                        }
                                     }
                                 }
                             } else AndroidView(
