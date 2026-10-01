@@ -425,11 +425,18 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--force-ipv4")
             addOption("--format-sort", "res,ext:mp4:m4a")
             addOption("--retry-sleep", "http:1:3")
-            if (isInstagramHost(Uri.parse(url).host.orEmpty())) {
-                addOption("--add-headers", "Referer:https://www.instagram.com/")
-                if (hasInstagramSession()) addOption("--cookies", instagramCookiesFile.absolutePath)
+            val sourceUri = Uri.parse(url)
+            val sourceHost = sourceUri.host.orEmpty()
+            val sourceOrigin = "${sourceUri.scheme}://${sourceHost}/"
+            val instagramSource = isInstagramHost(sourceHost)
+            // A browser-like UA and same-site Referer improve compatibility with public
+            // extractors that reject bare library requests. These headers never grant access.
+            addOption("--user-agent", userAgent ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
+            addOption("--add-headers", "Referer:${if (instagramSource) "https://www.instagram.com/" else sourceOrigin}")
+            addOption("--add-headers", "Accept-Language:en-US,en;q=0.9")
+            if (instagramSource && hasInstagramSession()) {
+                addOption("--cookies", instagramCookiesFile.absolutePath)
             }
-            if (userAgent != null) addOption("--user-agent", userAgent)
             addOption("-f", format)
         }
         val progressSample = longArrayOf(0L, System.currentTimeMillis())
@@ -498,6 +505,8 @@ class UniversalDownloadEngine(context: Context) {
             connection.readTimeout = 15_000
             connection.requestMethod = "GET"
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml,*/*;q=0.7")
+            connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+            connection.setRequestProperty("Referer", "${page.scheme}://${page.host}/")
             connection.setRequestProperty("User-Agent",
                 "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36")
             if (isInstagramHost(page.host.orEmpty())) {
