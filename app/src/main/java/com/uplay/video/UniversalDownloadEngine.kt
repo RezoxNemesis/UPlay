@@ -353,6 +353,23 @@ class UniversalDownloadEngine(context: Context) {
             }
         }
 
+        // Generic public-page fallback: inspect explicitly exposed HTML media fields
+        // and HTML5 video/source tags on any site, not just Instagram. This only resolves
+        // ordinary HTTP(S) media URLs; encrypted manifests and access-control challenges
+        // remain with the site's supported extractor/authentication flow.
+        onProgress(0f, "Checking publicly exposed page media…")
+        val exposedMediaUrl = runCatching { resolvePublicPageMediaUrl(url) }.getOrNull()
+        if (exposedMediaUrl != null) {
+            try {
+                val exposedFile = downloadDirectMedia(exposedMediaUrl, startedAt, onProgress)
+                if (exposedFile != null) return@withContext publishToDownloads(exposedFile)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                extractionFailure = error
+            }
+        }
+
         onProgress(0f, "Trying direct-file recovery…")
         var directFailure: Exception? = null
         val directFile = try {
@@ -464,6 +481,102 @@ class UniversalDownloadEngine(context: Context) {
         val shortcode = parts[1].takeIf { it.matches(Regex("[A-Za-z0-9_-]{5,}")) } ?: return null
         val canonicalKind = if (kind == "reels") "reel" else kind
         return "https://www.instagram.com/$canonicalKind/$shortcode/"
+    }
+
+    /**
+     * Finds ordinary media URLs deliberately exposed by a public HTML page.
+     * It does not fetch manifests, solve challenges, or decrypt protected streams.
+     */
+    private fun resolvePublicPageMediaUrl(pageUrl: String): String? {
+        val page = runCatching { Uri.parse(pageUrl) }.getOrNull() ?: return null
+        if (!(page.scheme.equals("http", true) || page.scheme.equals("https", true)) ||
+            page.host.isNullOrBlank()) return null
+        val connection = (URL(pageUrl).openConnection() as? HttpURLConnection) ?: return null
+        val html = try {
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = 12_000
+            connection.readTimeout = 15_000
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml,*/*;q=0.7")
+            connection.setRequestProperty("User-Agent",
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36")
+            if (isInstagramHost(page.host.orEmpty())) {
+                instagramCookieHeader()?.let { connection.setRequestProperty("Cookie", it) }
+                connection.setRequestProperty("Referer", "https://www.instagram.com/")
+            }
+            if (connection.responseCode !in 200..299) return null
+            val type = connection.contentType.orEmpty().substringBefore(';').trim().lowercase()
+            if (type.isNotBlank() && type !in setOf("text/html", "application/xhtml+xml")) return null
+            connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (total < 1_500_000) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 1_500_000 - total))
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    total += count
+                }
+                output.toString(Charsets.UTF_8.name())
+            }
+        } finally {
+            connection.disconnect()
+        }
+
+        fun normalize(candidateRaw: String): String? {
+            val candidate = candidateRaw
+                .replace("&amp;", "&", ignoreCase = true)
+                .replace("\\/", "/")
+                .replace("\\u0026", "&", ignoreCase = true)
+                .replace("\\u003d", "=", ignoreCase = true)
+                .trim()
+            val absolute = runCatching { URL(URL(pageUrl), candidate).toString() }.getOrNull() ?: return null
+            val media = runCatching { Uri.parse(absolute) }.getOrNull() ?: return null
+            if (!(media.scheme.equals("http", true) || media.scheme.equals("https", true)) ||
+                media.host.isNullOrBlank()) return null
+            val host = media.host.orEmpty().lowercase()
+            if (host == "localhost" || host == "127.0.0.1" || host == "::1") return null
+            return absolute
+        }
+
+        val metaTags = Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE)
+        for (match in metaTags.findAll(html)) {
+            val tag = match.value
+            val key = Regex("""(?:property|name)\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(tag)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
+            if (key !in setOf("og:video", "og:video:url", "og:video:secure_url",
+                    "twitter:player:stream", "twitter:player:stream:content_type")) continue
+            val value = Regex("""content\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(tag)?.groupValues?.getOrNull(1) ?: continue
+            normalize(value)?.let { return it }
+        }
+
+        // HTML5 media attributes are useful for self-hosted pages and embedded players.
+        val mediaTags = Regex("<(?:video|source)\\b[^>]*>", RegexOption.IGNORE_CASE)
+        for (match in mediaTags.findAll(html)) {
+            val tag = match.value
+            val value = Regex("""\\bsrc\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(tag)?.groupValues?.getOrNull(1) ?: continue
+            normalize(value)?.let { candidate ->
+                val path = runCatching { Uri.parse(candidate).lastPathSegment.orEmpty() }.getOrDefault("")
+                if (path.substringAfterLast('.', "").lowercase() in setOf(
+                        "mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp", "mp3", "m4a", "aac", "ogg", "opus", "wav"
+                    )) return candidate
+            }
+        }
+
+        // JSON-LD and common public embed metadata sometimes expose a direct content URL.
+        val jsonMedia = Regex("""["'](?:contentUrl|video_url|playable_url)["']\\s*:\\s*["']([^"']+)["']""",
+            RegexOption.IGNORE_CASE)
+        for (match in jsonMedia.findAll(html)) {
+            normalize(match.groupValues[1])?.let { candidate ->
+                val path = runCatching { Uri.parse(candidate).lastPathSegment.orEmpty() }.getOrDefault("")
+                if (path.substringAfterLast('.', "").lowercase() in setOf(
+                        "mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp", "mp3", "m4a", "aac", "ogg", "opus", "wav"
+                    )) return candidate
+            }
+        }
+        return null
     }
 
     private fun resolveInstagramPublicMediaUrl(pageUrl: String): String? {
