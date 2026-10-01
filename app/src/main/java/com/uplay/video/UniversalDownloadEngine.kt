@@ -20,6 +20,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import kotlin.math.roundToInt
 
 /**
@@ -254,7 +255,11 @@ class UniversalDownloadEngine(context: Context) {
 
         val outputExtension = extension.takeIf { it in knownMediaExtensions }
             ?: MimeTypeMap.getSingleton().getExtensionFromMimeType(mime).orEmpty().ifBlank { "mp4" }
-        val part = File(workDir, "uplay_${startedAt}_direct.$outputExtension.part")
+        val resumeKey = MessageDigest.getInstance("SHA-256")
+            .digest(rawUrl.toByteArray(Charsets.UTF_8))
+            .take(12).joinToString("") { "%02x".format(it) }
+        // Stable partial filename lets a later retry resume this exact direct URL.
+        val part = File(workDir, "uplay_direct_${resumeKey}.$outputExtension.part")
         val finalFile = File(workDir, "uplay_${startedAt}_direct.$outputExtension")
         var attempt = 0
         var lastError: Exception? = null
@@ -290,8 +295,15 @@ class UniversalDownloadEngine(context: Context) {
                 if (code !in 200..299) return null
                 val contentRangeStart = connection.getHeaderField("Content-Range")
                     ?.substringAfter("bytes ", "")?.substringBefore("-")?.toLongOrNull()
+                if (existing > 0L && code == HttpURLConnection.HTTP_PARTIAL &&
+                    contentRangeStart != existing) {
+                    part.delete()
+                    lastError = IllegalStateException("The server returned an incompatible resume range; restarting.")
+                    if (attempt < 3) continue
+                    throw lastError!!
+                }
                 val append = existing > 0L && code == HttpURLConnection.HTTP_PARTIAL &&
-                    (contentRangeStart == null || contentRangeStart == existing)
+                    contentRangeStart == existing
                 val offset = if (append) existing else 0L
                 val responseLength = connection.contentLengthLong.takeIf { it >= 0L }
                 val totalFromRange = connection.getHeaderField("Content-Range")
