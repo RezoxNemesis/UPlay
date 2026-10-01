@@ -1098,10 +1098,24 @@ private fun UPlayHome(
                                         playbackError = null
                                         runCatching {
                                             player?.let { active ->
-                                                val retryPosition = active.currentPosition.coerceAtLeast(0L)
-                                                active.prepare()
-                                                active.seekTo(retryPosition)
-                                                active.playWhenReady = true
+                                                val activeUri = active.currentMediaItem?.localConfiguration?.uri
+                                                val activePath = activeUri?.path.orEmpty().lowercase()
+                                                val extension = activePath.substringAfterLast('/').substringAfterLast('.', "")
+                                                val directMedia = extension in setOf(
+                                                    "mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp",
+                                                    "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
+                                                )
+                                                if (activeUri != null &&
+                                                    (activeUri.scheme.equals("https", true) || activeUri.scheme.equals("http", true)) &&
+                                                    !directMedia
+                                                ) {
+                                                    startUniversalDownload(activeUri.toString(), playAfterDownload = true)
+                                                } else {
+                                                    val retryPosition = active.currentPosition.coerceAtLeast(0L)
+                                                    active.prepare()
+                                                    active.seekTo(retryPosition)
+                                                    active.playWhenReady = true
+                                                }
                                             }
                                         }.onFailure {
                                             playbackError = "Retry couldn't start. Try reopening the video."
