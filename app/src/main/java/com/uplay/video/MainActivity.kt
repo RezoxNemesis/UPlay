@@ -443,12 +443,41 @@ private fun UPlayHome(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(onClick = {
-                            runCatching {
-                                val isInstagram = siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")
-                                val target = if (isInstagram) "https://www.instagram.com/accounts/login/" else "https://$siteSessionHost/"
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
+                            val isInstagram = siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")
+                            val target = if (isInstagram) "https://www.instagram.com/accounts/login/" else "https://$siteSessionHost/"
+                            val browserPackages = listOf(
+                                "com.android.chrome",
+                                "org.mozilla.firefox",
+                                "com.microsoft.emmx",
+                                "com.brave.browser",
+                                "com.sec.android.app.sbrowser",
+                                "com.opera.browser",
+                                "com.android.browser"
+                            )
+                            var opened = false
+                            for (browserPackage in browserPackages) {
+                                try {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(target)).apply {
+                                            addCategory(Intent.CATEGORY_BROWSABLE)
+                                            setPackage(browserPackage)
+                                        }
+                                    )
+                                    opened = true
+                                    break
+                                } catch (_: android.content.ActivityNotFoundException) {
+                                    // Try the next installed browser; never hand this URL to Instagram.
+                                } catch (_: SecurityException) {
+                                    // A browser may be unavailable or disabled; continue to the next one.
+                                }
                             }
-                        }) { Text("Open browser") }
+                            if (opened) {
+                                instagramWebStatus = "Opened in a web browser, not the Instagram app. Browser sign-in cookies cannot automatically be copied into UPlay; use the in-app page when it loads."
+                            } else {
+                                instagramWebStatus = "No supported standalone browser was found. Install or enable Chrome or Firefox, then try again."
+                                android.widget.Toast.makeText(context, instagramWebStatus, android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        }) { Text("Open browser (not Instagram)") }
                         TextButton(onClick = { instagramLoginOpen = false }) { Text("Cancel") }
                         if (siteSessionReady) {
                             TextButton(onClick = {
