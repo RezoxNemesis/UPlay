@@ -454,8 +454,12 @@ private fun UPlayHome(
                     Button(
                         onClick = {
                             CookieManager.getInstance().flush()
-                            val cookies = CookieManager.getInstance()
-                                .getCookie("https://www.instagram.com").orEmpty()
+                            val cookieManager = CookieManager.getInstance()
+                            val cookies = listOf(
+                                cookieManager.getCookie("https://www.instagram.com"),
+                                cookieManager.getCookie("https://m.instagram.com"),
+                                cookieManager.getCookie("https://instagram.com")
+                            ).filterNot { it.isNullOrBlank() }.joinToString("; ")
                             if (downloadEngine.saveInstagramCookies(cookies)) {
                                 instagramSessionReady = true
                                 instagramLoginOpen = false
