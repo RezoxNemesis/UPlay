@@ -262,6 +262,8 @@ private fun UPlayHome(
     var playbackDuration by remember { mutableLongStateOf(0L) }
     var downloadBusy by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadQuality by remember { mutableStateOf("Best available") }
+    var qualityMenuExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val uiScope = rememberCoroutineScope()
@@ -411,13 +413,13 @@ private fun UPlayHome(
         downloadBusy = true
         downloadProgress = 0f
         message = when {
-            downloaderReady -> "Finding the best available video stream…"
+            downloaderReady -> "Finding $downloadQuality video streams…"
             downloaderInitError != null -> "Retrying downloader initialization…"
             else -> "Preparing universal downloader…"
         }
         uiScope.launch {
             try {
-                downloadEngine.download(candidate) { percent, status ->
+                downloadEngine.download(candidate, downloadQuality) { percent, status ->
                     uiScope.launch {
                         downloadProgress = (percent / 100f).coerceIn(0f, 1f)
                         if (status.isNotBlank()) message = status
@@ -834,7 +836,7 @@ private fun UPlayHome(
                                         RotaryControlDial(
                                             open = radialOpen,
                                             onToggle = { radialOpen = !radialOpen },
-                                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).size(210.dp),
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(240.dp),
                                             onAction = { action ->
                                                 radialOpen = false
                                                 controlsVisible = true
@@ -966,6 +968,46 @@ private fun UPlayHome(
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(5.dp))
                                 Text("Play link", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Download quality",
+                                color = if (systemDark) Color(0xFFB5C4D7) else Color(0xFF536277),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Box {
+                                OutlinedButton(
+                                    onClick = { qualityMenuExpanded = true },
+                                    enabled = !downloadBusy,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB)
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(downloadQuality)
+                                }
+                                DropdownMenu(
+                                    expanded = qualityMenuExpanded,
+                                    onDismissRequest = { qualityMenuExpanded = false }
+                                ) {
+                                    listOf("Best available", "1080p", "720p", "480p", "360p").forEach { quality ->
+                                        DropdownMenuItem(
+                                            text = { Text(quality) },
+                                            onClick = {
+                                                downloadQuality = quality
+                                                qualityMenuExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                         OutlinedButton(
@@ -1721,7 +1763,7 @@ private fun RotaryControlDial(
                 var lastAngle = Float.NaN
                 detectDragGestures(
                     onDragStart = { point ->
-                        val center = Offset(size.width / 2f, size.height / 2f)
+                        val center = Offset(size.width, 0f)
                         lastTick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
                         lastAngle = Math.toDegrees(
                             kotlin.math.atan2(
@@ -1731,7 +1773,7 @@ private fun RotaryControlDial(
                         ).toFloat()
                     },
                     onDrag = { change, _ ->
-                        val center = Offset(size.width / 2f, size.height / 2f)
+                        val center = Offset(size.width, 0f)
                         val dx = change.position.x - center.x
                         val dy = change.position.y - center.y
                         if (dx * dx + dy * dy > 18.dp.toPx() * 18.dp.toPx()) {
@@ -1766,8 +1808,8 @@ private fun RotaryControlDial(
         }
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val radius = size.minDimension * 0.355f
+            val center = Offset(size.width, 0f)
+            val radius = size.minDimension * 0.70f
             if (unfold > 0.01f) {
                 drawCircle(
                     color = Color(0xFF8DD8FF).copy(alpha = 0.12f * unfold),
@@ -1775,10 +1817,23 @@ private fun RotaryControlDial(
                     center = center,
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
                 )
+                for (tick in 0..48) {
+                    val angle = Math.toRadians((90f + tick * 90f / 48f).toDouble())
+                    val outer = radius
+                    val inner = radius - if (tick % 4 == 0) 7.dp.toPx() else 3.dp.toPx()
+                    drawLine(
+                        color = Color(0xFF8DD8FF).copy(alpha = (if (tick % 4 == 0) 0.62f else 0.24f) * unfold),
+                        start = Offset(center.x + kotlin.math.cos(angle).toFloat() * inner,
+                            center.y + kotlin.math.sin(angle).toFloat() * inner),
+                        end = Offset(center.x + kotlin.math.cos(angle).toFloat() * outer,
+                            center.y + kotlin.math.sin(angle).toFloat() * outer),
+                        strokeWidth = if (tick % 4 == 0) 1.5.dp.toPx() else 0.8.dp.toPx()
+                    )
+                }
                 drawArc(
                     color = Color(0xFF8DD8FF).copy(alpha = 0.52f * unfold),
-                    startAngle = -90f + rotation,
-                    sweepAngle = 250f,
+                    startAngle = 90f + rotation * 0.22f,
+                    sweepAngle = 90f,
                     useCenter = false,
                     topLeft = Offset(center.x - radius, center.y - radius),
                     size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
@@ -1790,10 +1845,10 @@ private fun RotaryControlDial(
             }
         }
 
-        val radius = 70f * unfold
+        val radius = 164f * unfold
         actions.forEachIndexed { index, item ->
             val angle = Math.toRadians(
-                (-90f + index * (360f / actions.size) + rotation + closingSweep).toDouble()
+                (90f + index * (90f / (actions.size - 1)) + rotation * 0.22f + closingSweep * 0.25f).toDouble()
             )
             val x = (kotlin.math.cos(angle) * radius).toFloat().dp
             val y = (kotlin.math.sin(angle) * radius).toFloat().dp
@@ -1801,7 +1856,7 @@ private fun RotaryControlDial(
                 icon = item.first,
                 label = item.second,
                 enabled = open,
-                modifier = Modifier.align(Alignment.Center)
+                modifier = Modifier.align(Alignment.TopEnd)
                     .offset(x = x, y = y)
                     .graphicsLayer {
                         alpha = unfold
@@ -1814,14 +1869,18 @@ private fun RotaryControlDial(
         }
 
         Surface(
-            onClick = onToggle,
+            onClick = {
+                dialView.playSoundEffect(SoundEffectConstants.CLICK)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onToggle()
+            },
             shape = CircleShape,
             color = if (open) Color(0xFF8DD8FF) else Color(0xE6101928),
             border = androidx.compose.foundation.BorderStroke(
                 width = if (open) 1.5.dp else 1.dp,
                 color = Color(0xCC8DD8FF)
             ),
-            modifier = Modifier.align(Alignment.Center).size(52.dp).graphicsLayer {
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(52.dp).graphicsLayer {
                 rotationZ = gearRotation
                 shadowElevation = 14.dp.toPx()
             }
