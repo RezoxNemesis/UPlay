@@ -683,7 +683,7 @@ private fun UPlayHome(
                                                 .background(Color(0x990B101B), RoundedCornerShape(50))
                                         ) { Icon(Icons.Default.LockOpen, "Unlock controls", tint = Green) }
                                     } else {
-                                        AnimatedVisibility(
+                                        androidx.compose.animation.AnimatedVisibility(
                                             visible = !radialOpen,
                                             enter = fadeIn() + scaleIn(),
                                             exit = fadeOut() + scaleOut(),
