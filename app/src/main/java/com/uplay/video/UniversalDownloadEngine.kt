@@ -124,6 +124,60 @@ class UniversalDownloadEngine(context: Context) {
             instagramCookiesFile.readText().contains("\tsessionid\t")
         }.getOrDefault(false)
 
+    private fun cookieScopeForHost(hostValue: String): String {
+        val host = hostValue.trim().lowercase().removePrefix(".")
+        require(host.isNotBlank() && host.matches(Regex("[a-z0-9.-]+")) &&
+            !host.startsWith(".") && !host.endsWith(".") && ".." !in host) {
+            "The website hostname is invalid."
+        }
+        return if (host == "instagram.com" || host.endsWith(".instagram.com")) ".instagram.com" else host
+    }
+
+    private fun siteCookiesFile(hostValue: String): File {
+        val scope = cookieScopeForHost(hostValue)
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(scope.toByteArray(Charsets.UTF_8))
+            .take(10).joinToString("") { "%02x".format(it) }
+        return File(appContext.filesDir, "site-cookies-$key.txt")
+    }
+
+    fun hasSiteSession(hostValue: String): Boolean =
+        runCatching { siteCookiesFile(hostValue).isFile && siteCookiesFile(hostValue).length() > 40L }
+            .getOrDefault(false)
+
+    /** Save only cookies the user explicitly approves, scoped to the current website. */
+    fun saveSiteCookies(hostValue: String, cookieHeader: String): Boolean = runCatching {
+        val scope = cookieScopeForHost(hostValue)
+        val pairs = cookieHeader.split(';').mapNotNull { item ->
+            val separator = item.indexOf('=')
+            if (separator <= 0) null else {
+                val name = item.substring(0, separator).trim()
+                val value = item.substring(separator + 1).trim()
+                if (name.isBlank() || value.isBlank() || name.contains('\t') ||
+                    value.contains('\t') || value.contains('\n') || value.contains('\r')) null
+                else name to value
+            }
+        }.distinctBy { it.first }
+        if (pairs.isEmpty()) return@runCatching false
+        val domain = scope.removePrefix(".")
+        val includeSubdomains = scope.startsWith(".")
+        val contents = buildString {
+            append("# Netscape HTTP Cookie File\n")
+            pairs.forEach { (name, value) ->
+                append(domain).append('\t')
+                    .append(if (includeSubdomains) "TRUE" else "FALSE")
+                    .append("\t/\tTRUE\t0\t")
+                    .append(name).append('\t').append(value).append('\n')
+            }
+        }
+        siteCookiesFile(hostValue).writeText(contents)
+        true
+    }.getOrDefault(false)
+
+    fun clearSiteSession(hostValue: String) {
+        runCatching { siteCookiesFile(hostValue).delete() }
+    }
+
     /**
      * Stores only cookies the user explicitly approves from the embedded Instagram login.
      * The cookie jar stays in this app's private storage and is only passed to Instagram
@@ -149,6 +203,7 @@ class UniversalDownloadEngine(context: Context) {
         }
         return runCatching {
             instagramCookiesFile.writeText(contents)
+            saveSiteCookies("www.instagram.com", cookieHeader)
             true
         }.getOrDefault(false)
     }
@@ -434,7 +489,13 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--user-agent", userAgent ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
             addOption("--add-header", "Referer:${if (instagramSource) "https://www.instagram.com/" else sourceOrigin}")
             addOption("--add-header", "Accept-Language:en-US,en;q=0.9")
-            if (instagramSource && hasInstagramSession()) {
+            // Use only the cookie jar explicitly approved for this source host. Cookie jars
+            // are host-scoped so a login to one website is never sent to another website.
+            val sourceCookies = runCatching { siteCookiesFile(sourceHost) }.getOrNull()
+                ?.takeIf { it.isFile && it.length() > 40L }
+            if (sourceCookies != null) {
+                addOption("--cookies", sourceCookies.absolutePath)
+            } else if (instagramSource && hasInstagramSession()) {
                 addOption("--cookies", instagramCookiesFile.absolutePath)
             }
             addOption("-f", format)
