@@ -1635,12 +1635,14 @@ private fun RotaryControlDial(
                                 var delta = angle - lastAngle
                                 if (delta > 180f) delta -= 360f
                                 if (delta < -180f) delta += 360f
-                                rotationAnim.snapTo(rotationAnim.value + delta)
-                                val tick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
-                                if (tick != lastTick) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    dialView.playSoundEffect(SoundEffectConstants.CLICK)
-                                    lastTick = tick
+                                dialScope.launch {
+                                    rotationAnim.snapTo(rotationAnim.value + delta)
+                                    val tick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
+                                    if (tick != lastTick) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        dialView.playSoundEffect(SoundEffectConstants.CLICK)
+                                        lastTick = tick
+                                    }
                                 }
                             }
                             lastAngle = angle
