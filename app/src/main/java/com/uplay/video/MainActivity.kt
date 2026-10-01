@@ -1870,7 +1870,8 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
         runCatching {
             if (!file.exists() || file.length() < 100L) {
                 val sampleRate = 22050
-                val sampleCount = (sampleRate * 0.045).toInt()
+                // A short layered mechanical detent: soft low body + crisp, damped click.
+                val sampleCount = (sampleRate * 0.065).toInt()
                 val pcmBytes = sampleCount * 2
                 val wav = ByteBuffer.allocate(44 + pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
                 wav.put("RIFF".toByteArray(Charsets.US_ASCII))
@@ -1888,11 +1889,13 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
                 wav.putInt(pcmBytes)
                 for (i in 0 until sampleCount) {
                     val t = i.toDouble() / sampleRate
-                    val envelope = kotlin.math.exp(-t * 95.0)
-                    val frequency = 2300.0 - 900.0 * (i.toDouble() / sampleCount)
+                    val envelope = kotlin.math.exp(-t * 58.0)
+                    val frequency = 1350.0 - 650.0 * (i.toDouble() / sampleCount)
                     val fundamental = sin(2.0 * PI * frequency * t)
-                    val overtone = sin(2.0 * PI * frequency * 1.73 * t) * 0.22
-                    val sample = ((fundamental + overtone) * envelope * 0.42 * Short.MAX_VALUE)
+                    val overtone = sin(2.0 * PI * frequency * 2.15 * t) * 0.16
+                    val lowBody = sin(2.0 * PI * 180.0 * t) * kotlin.math.exp(-t * 40.0) * 0.22
+                    val brightClick = sin(2.0 * PI * 3100.0 * t) * kotlin.math.exp(-t * 220.0) * 0.14
+                    val sample = ((fundamental * envelope + overtone * envelope + lowBody + brightClick) * 0.48 * Short.MAX_VALUE)
                         .toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
                     wav.putShort(sample.toShort())
                 }
@@ -1960,6 +1963,7 @@ private fun RotaryControlDial(
                 var lastAngle = Float.NaN
                 var lastAngularDelta = 0f
                 var lastPage = pageFor(rotationAnim.value)
+                var lastSoundDetent = kotlin.math.floor(rotationAnim.value / 30f).toInt()
                 detectDragGestures(
                     onDragStart = { point ->
                         val center = Offset(size.width / 2f, size.height / 2f)
@@ -1968,6 +1972,7 @@ private fun RotaryControlDial(
                         lastAngle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
                         lastAngularDelta = 0f
                         lastPage = pageFor(rotationAnim.value)
+                        lastSoundDetent = kotlin.math.floor(rotationAnim.value / 30f).toInt()
                     },
                     onDrag = { change, _ ->
                         val center = Offset(size.width / 2f, size.height / 2f)
@@ -1985,12 +1990,16 @@ private fun RotaryControlDial(
                                     dialScope.launch {
                                         val next = rotationAnim.value + delta
                                         rotationAnim.snapTo(next)
+                                        val nextSoundDetent = kotlin.math.floor(next / 30f).toInt()
+                                        if (nextSoundDetent != lastSoundDetent) {
+                                            lastSoundDetent = nextSoundDetent
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            tickSound()
+                                        }
                                         val nextPage = pageFor(next)
                                         if (nextPage != lastPage) {
                                             actionPage = nextPage
                                             lastPage = nextPage
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            tickSound()
                                         }
                                     }
                                 }
