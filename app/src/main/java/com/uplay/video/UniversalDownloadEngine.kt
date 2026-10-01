@@ -131,16 +131,16 @@ class UniversalDownloadEngine(context: Context) {
             if (separator <= 0) null else {
                 val name = item.substring(0, separator).trim()
                 val value = item.substring(separator + 1).trim()
-                if (name.isBlank() || value.contains('\\n') || value.contains('\\r') ||
-                    name.contains('\\t') || value.contains('\\t')) null else name to value
+                if (name.isBlank() || value.contains('\n') || value.contains('\r') ||
+                    name.contains('\t') || value.contains('\t')) null else name to value
             }
         }.distinctBy { it.first }
         if (pairs.none { it.first == "sessionid" && it.second.isNotBlank() }) return false
         val contents = buildString {
-            append("# Netscape HTTP Cookie File\\n")
+            append("# Netscape HTTP Cookie File\n")
             pairs.forEach { (name, value) ->
-                append(".instagram.com\\tTRUE\\t/\\tTRUE\\t0\\t")
-                append(name).append('\\t').append(value).append('\\n')
+                append(".instagram.com\tTRUE\t/\tTRUE\t0\t")
+                append(name).append('\t').append(value).append('\n')
             }
         }
         return runCatching {
