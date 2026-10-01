@@ -57,6 +57,10 @@ class UniversalDownloadEngine(context: Context) {
                 "User-Agent",
                 "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36"
             )
+            if (isInstagramHost(parsed.host.orEmpty())) {
+                instagramCookieHeader()?.let { connection.setRequestProperty("Cookie", it) }
+                connection.setRequestProperty("Referer", "https://www.instagram.com/")
+            }
             if (connection.responseCode !in 200..299) return@withContext DownloadPreview(fallbackTitle, null)
             val contentType = connection.contentType.orEmpty().substringBefore(';').trim().lowercase()
             if (contentType.isNotBlank() && contentType !in setOf("text/html", "application/xhtml+xml")) {
@@ -152,6 +156,40 @@ class UniversalDownloadEngine(context: Context) {
     fun clearInstagramSession() {
         runCatching { instagramCookiesFile.delete() }
     }
+
+    private fun isInstagramHost(hostValue: String): Boolean {
+        val host = hostValue.lowercase()
+        return host == "instagram.com" || host.endsWith(".instagram.com")
+    }
+
+    /**
+     * Reads the user-approved Instagram WebView session from app-private Netscape cookie storage.
+     * Cookies are only sent back to Instagram hosts, never to arbitrary URLs or CDN hosts.
+     */
+    private fun instagramCookieHeader(): String? = runCatching {
+        if (!instagramCookiesFile.isFile) return@runCatching null
+        val nowSeconds = System.currentTimeMillis() / 1000L
+        instagramCookiesFile.readLines()
+            .asSequence()
+            .filter { it.isNotBlank() && !it.startsWith("#") }
+            .mapNotNull { line ->
+                val fields = line.split('\t')
+                if (fields.size < 7) return@mapNotNull null
+                val domain = fields[0].removePrefix(".").lowercase()
+                val secure = fields[3].equals("TRUE", true)
+                val expires = fields[4].toLongOrNull() ?: 0L
+                val name = fields[5].trim()
+                val value = fields[6].trim()
+                if (domain != "instagram.com" && !domain.endsWith(".instagram.com")) return@mapNotNull null
+                if (!secure || (expires > 0L && expires < nowSeconds) || name.isBlank() ||
+                    value.isBlank() || name.contains('=') || value.contains(';') ||
+                    value.contains('\r') || value.contains('\n')) return@mapNotNull null
+                "$name=$value"
+            }
+            .distinctBy { it.substringBefore('=') }
+            .joinToString("; ")
+            .takeIf { it.isNotBlank() }
+    }.getOrNull()
 
     @Volatile private var initialized = false
 
@@ -441,6 +479,10 @@ class UniversalDownloadEngine(context: Context) {
                 "User-Agent",
                 "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
             )
+            if (isInstagramHost(Uri.parse(pageUrl).host.orEmpty())) {
+                instagramCookieHeader()?.let { connection.setRequestProperty("Cookie", it) }
+                connection.setRequestProperty("Referer", "https://www.instagram.com/")
+            }
             if (connection.responseCode !in 200..299) return null
             val type = connection.contentType.orEmpty().substringBefore(';').trim().lowercase()
             if (type.isNotBlank() && type !in setOf("text/html", "application/xhtml+xml")) return null
