@@ -1979,7 +1979,7 @@ private fun RotaryControlDial(
                         val dx = change.position.x - center.x
                         val dy = change.position.y - center.y
                         val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                        if (distance > 34.dp.toPx() && distance < size.minDimension * 0.58f) {
+                        if (distance > 34.dp.toPx() && distance < minOf(size.width, size.height) * 0.58f) {
                             val angle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
                             if (!lastAngle.isNaN()) {
                                 var delta = angle - lastAngle
