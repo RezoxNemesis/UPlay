@@ -1006,6 +1006,22 @@ private fun UPlayHome(
                                                     11 -> trackDialog = 2
                                                     12 -> trackDialog = 1
                                                     13 -> fullScreen = !fullScreen
+                                                    14 -> {
+                                                        val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+                                                        val index = speeds.indexOfFirst { it == playbackSpeed }.coerceAtLeast(0)
+                                                        playbackSpeed = speeds[(index - 1 + speeds.size) % speeds.size]
+                                                        player?.setPlaybackSpeed(playbackSpeed)
+                                                        playerPreferences.edit().putFloat("playback_speed", playbackSpeed).apply()
+                                                        message = "Playback speed: ${playbackSpeed}×"
+                                                    }
+                                                    15 -> player?.seekTo(0L)
+                                                    16 -> {
+                                                        val repeat = player?.repeatMode != Player.REPEAT_MODE_ONE
+                                                        player?.repeatMode = if (repeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                                                        playerPreferences.edit().putBoolean("repeat_video", repeat).apply()
+                                                        message = if (repeat) "Repeat enabled" else "Repeat disabled"
+                                                    }
+                                                    17 -> fullScreen = !fullScreen
                                                 }
                                             }
                                         )
@@ -1973,7 +1989,11 @@ private fun RotaryControlDial(
         Icons.Default.VolumeUp to "Mute or unmute",
         Icons.Default.Subtitles to "Subtitle tracks",
         Icons.Default.GraphicEq to "Audio tracks",
-        Icons.Default.Fullscreen to "Toggle fullscreen"
+        Icons.Default.Fullscreen to "Toggle fullscreen",
+        Icons.Default.FastRewind to "Playback speed down",
+        Icons.Default.FirstPage to "Restart playback",
+        Icons.Default.Repeat to "Toggle repeat mode",
+        Icons.Default.FullscreenExit to "Toggle fullscreen"
     )
     // Six controls occupy the full rotary ring; clipping shows only the three on
     // the screen-facing half. A complete revolution advances to the next six actions.
