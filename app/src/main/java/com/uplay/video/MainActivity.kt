@@ -406,7 +406,7 @@ private fun UPlayHome(
                                         }
                                     }
                                 }
-                                loadUrl("https://www.instagram.com/accounts/login/")
+                                loadUrl("https://m.instagram.com/accounts/login/")
                             }
                         },
                         modifier = Modifier.fillMaxWidth().height(390.dp)
@@ -424,7 +424,7 @@ private fun UPlayHome(
                             runCatching {
                                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.instagram.com/accounts/login/")))
                             }
-                        }) { Text("Open in browser") }
+                        }) { Text("Open browser") }
                         TextButton(onClick = { instagramLoginOpen = false }) { Text("Cancel") }
                         if (instagramSessionReady) {
                             TextButton(onClick = {
@@ -436,7 +436,9 @@ private fun UPlayHome(
                                 message = "Instagram session removed from UPlay."
                             }) { Text("Disconnect") }
                         }
-                        Button(onClick = {
+                    }
+                    Button(
+                        onClick = {
                             CookieManager.getInstance().flush()
                             val cookies = CookieManager.getInstance()
                                 .getCookie("https://www.instagram.com").orEmpty()
@@ -445,10 +447,11 @@ private fun UPlayHome(
                                 instagramLoginOpen = false
                                 message = "Instagram session saved locally. Retry the public or account-authorized Reel link."
                             } else {
-                                message = "Instagram session not detected yet. Finish signing in, then tap Use session."
+                                message = "No Instagram session was found in UPlay's login window. Browser sign-in does not automatically transfer cookies into this window."
                             }
-                        }) { Text("Use session") }
-                    }
+                        },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    ) { Text("Use session", maxLines = 1) }
                 }
             }
         }
@@ -643,7 +646,17 @@ private fun UPlayHome(
                 mediaScanRequest++
             } catch (error: Exception) {
                 val detail = error.message.orEmpty()
-                message = when {
+                if (playAfterDownload) {
+                    // Try extractor-backed download and play the local result first. If
+                    // extraction fails, fall back to the source page and its native player.
+                    webPlaybackUrl = normalizedCandidate
+                    selected = true
+                    isMusicMode = false
+                    currentTab = 1
+                    controlsVisible = false
+                    playbackError = null
+                    message = "Direct stream extraction failed; opening the source page instead. " + detail.take(150)
+                } else message = when {
                     detail.contains("signed-in session", true) || detail.contains("verification", true) ||
                         detail.contains("checkpoint", true) ->
                         detail.take(260)
@@ -1899,19 +1912,12 @@ private fun UPlayHome(
                                         "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
                                     )
                                     if (!directMedia) {
-                                        player?.pause()
-                                        webPlaybackUrl = candidate
+                                        webPlaybackUrl = null
                                         selected = true
                                         isMusicMode = false
-                                        controlsVisible = false
                                         currentTab = 1
                                         playbackError = null
-                                        message = "Opening source page in UPlay…"
-                                        val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
-                                        recentVideos.removeAll { it.uri == candidate }
-                                        recentVideos.add(0, entry)
-                                        while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
-                                        saveRecentVideos(context, recentVideos)
+                                        startUniversalDownload(candidate, playAfterDownload = true)
                                     } else {
                                         webPlaybackUrl = null
                                         onPlayUrl(candidate)
@@ -1919,7 +1925,7 @@ private fun UPlayHome(
                                         currentTab = 1
                                         controlsVisible = true
                                         playbackError = null
-                                        val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                        val entry = RecentVideo(candidate, Uri.decode(candidate.substringAfterLast('/')).replace('+', ' ').ifBlank { candidate }, 0L, true)
                                         recentVideos.removeAll { it.uri == candidate }
                                         recentVideos.add(0, entry)
                                         while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
