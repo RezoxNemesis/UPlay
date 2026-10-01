@@ -1,7 +1,6 @@
 package com.uplay.video
 
 import android.app.Activity
-import android.app.DownloadManager
 import android.content.Context
 import android.Manifest
 import android.content.ContentUris
@@ -10,7 +9,6 @@ import android.content.pm.PackageManager
 import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.os.Build
-import android.os.Environment
 import android.os.CancellationSignal
 import android.util.Size
 import android.util.LruCache
@@ -22,6 +20,7 @@ import android.view.View
 import android.view.LayoutInflater
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,6 +63,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Lock
@@ -128,9 +128,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -156,11 +153,22 @@ private data class LibraryRow(val group: String, val entry: RecentVideo? = null)
 
 class MainActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
+    private lateinit var downloadEngine: UniversalDownloadEngine
+    private val downloaderReady = mutableStateOf(false)
+    private val downloaderInitError = mutableStateOf<String?>(null)
     private val incomingSharedUrl = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         incomingSharedUrl.value = extractSharedUrl(intent)
+        downloadEngine = UniversalDownloadEngine(this)
+        lifecycleScope.launch {
+            val initResult = withContext(Dispatchers.IO) {
+                runCatching { downloadEngine.initialize() }
+            }
+            downloaderReady.value = initResult.isSuccess
+            downloaderInitError.value = initResult.exceptionOrNull()?.message?.take(160)
+        }
         val preferences = getSharedPreferences("uplay_settings", Context.MODE_PRIVATE)
         val darkThemeState = mutableStateOf(
             preferences.getBoolean(
@@ -183,6 +191,9 @@ class MainActivity : ComponentActivity() {
             )) {
                 UPlayHome(
                     player = player,
+                    downloadEngine = downloadEngine,
+                    downloaderReady = downloaderReady.value,
+                    downloaderInitError = downloaderInitError.value,
                     incomingSharedUrl = incomingSharedUrl.value,
                     onSharedUrlConsumed = { incomingSharedUrl.value = null },
                     darkTheme = useDarkTheme,
@@ -232,6 +243,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun UPlayHome(
     player: ExoPlayer?,
+    downloadEngine: UniversalDownloadEngine,
+    downloaderReady: Boolean,
+    downloaderInitError: String?,
     incomingSharedUrl: String?,
     onSharedUrlConsumed: () -> Unit,
     darkTheme: Boolean,
@@ -246,6 +260,8 @@ private fun UPlayHome(
     var fullScreen by remember { mutableStateOf(false) }
     var playbackPosition by remember { mutableLongStateOf(0L) }
     var playbackDuration by remember { mutableLongStateOf(0L) }
+    var downloadBusy by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val uiScope = rememberCoroutineScope()
@@ -381,6 +397,58 @@ private fun UPlayHome(
         )
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+
+    fun startUniversalDownload(candidate: String) {
+        val parsed = runCatching { Uri.parse(candidate.trim()) }.getOrNull()
+        val valid = parsed != null &&
+            (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
+            !parsed.host.isNullOrBlank()
+        if (!valid) {
+            message = "Paste a valid HTTP(S) video page or direct media URL first."
+            return
+        }
+        if (downloadBusy) return
+        downloadBusy = true
+        downloadProgress = 0f
+        message = when {
+            downloaderReady -> "Finding the best available video stream…"
+            downloaderInitError != null -> "Retrying downloader initialization…"
+            else -> "Preparing universal downloader…"
+        }
+        uiScope.launch {
+            try {
+                downloadEngine.download(candidate, "uplay-download-\${System.currentTimeMillis()}") { percent, status ->
+                    uiScope.launch {
+                        downloadProgress = (percent / 100f).coerceIn(0f, 1f)
+                        if (status.isNotBlank()) message = status
+                    }
+                }
+                downloadProgress = 1f
+                message = if (Build.VERSION.SDK_INT >= 29) {
+                    "Download complete — saved to Downloads/UPlay."
+                } else {
+                    "Download complete — saved in UPlay app downloads."
+                }
+                mediaScanRequest++
+            } catch (error: Exception) {
+                val detail = error.message.orEmpty()
+                message = when {
+                    detail.contains("private", true) || detail.contains("login", true) ||
+                        detail.contains("sign in", true) || detail.contains("authentication", true) ->
+                        "This source requires access UPlay doesn't have. Try a publicly accessible link."
+                    detail.contains("unsupported", true) || detail.contains("no video", true) ||
+                        detail.contains("unable to extract", true) || detail.contains("not a valid", true) ->
+                        "No downloadable stream was found. The site may be unsupported or restrict external extraction."
+                    detail.contains("network", true) || detail.contains("timed out", true) ||
+                        detail.contains("connection", true) ->
+                        "The connection failed. Check your network and retry."
+                    else -> "Download failed: \${detail.take(120).ifBlank { "The source could not be processed." }}"
+                }
+            } finally {
+                downloadBusy = false
+            }
+        }
+    }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -877,21 +945,7 @@ private fun UPlayHome(
                                     val validUrl = parsed != null &&
                                         (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                         !parsed.host.isNullOrBlank()
-                                    if (validUrl && isInstagramPostUrl(candidate)) {
-                                        uiScope.launch {
-                                            message = "Checking public Instagram media…"
-                                            val mediaUrl = runCatching { resolvePublicInstagramVideoUrl(candidate) }.getOrNull()
-                                            if (mediaUrl != null) {
-                                                runCatching { queuePublicMediaDownload(context, mediaUrl, "Instagram video") }
-                                                    .onSuccess { message = "Instagram download queued. Check Downloads when it finishes." }
-                                                    .onFailure { message = "Couldn't start the download. Try opening the post instead." }
-                                            } else {
-                                                message = "Instagram didn't expose a public video file. Opening the post instead."
-                                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
-                                                    .onFailure { message = "Couldn't open Instagram. Try your browser." }
-                                            }
-                                        }
-                                    } else if (validUrl) {
+                                    if (validUrl) {
                                         onPlayUrl(candidate)
                                         selected = true
                                         isMusicMode = false
@@ -911,8 +965,28 @@ private fun UPlayHome(
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(5.dp))
-                                Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link", fontWeight = FontWeight.Bold)
+                                Text("Play link", fontWeight = FontWeight.Bold)
                             }
+                        }
+                        OutlinedButton(
+                            onClick = { startUniversalDownload(url) },
+                            enabled = !downloadBusy && url.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
+                            shape = RoundedCornerShape(15.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (downloadBusy) "Downloading…" else if (downloaderReady) "Download video" else "Prepare downloader")
+                        }
+                        if (downloadBusy) {
+                            LinearProgressIndicator(
+                                progress = downloadProgress,
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)),
+                                color = Color(0xFF8DD8FF),
+                                trackColor = if (systemDark) Color(0xFF233448) else Color(0xFFD8E8F5)
+                            )
+                            Text(message, color = secondaryText, fontSize = 12.sp, maxLines = 2)
                         }
                         OutlinedButton(
                             onClick = { audioPicker.launch(arrayOf("audio/*")) },
@@ -1289,21 +1363,7 @@ private fun UPlayHome(
                                 val validUrl = parsed != null &&
                                     (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                     !parsed.host.isNullOrBlank()
-                                if (validUrl && isInstagramPostUrl(candidate)) {
-                                    uiScope.launch {
-                                        message = "Checking public Instagram media…"
-                                        val mediaUrl = runCatching { resolvePublicInstagramVideoUrl(candidate) }.getOrNull()
-                                        if (mediaUrl != null) {
-                                            runCatching { queuePublicMediaDownload(context, mediaUrl, "Instagram video") }
-                                                .onSuccess { message = "Instagram download queued. Check Downloads when it finishes." }
-                                                .onFailure { message = "Couldn't start the download. Try opening the post instead." }
-                                        } else {
-                                            message = "Instagram didn't expose a public video file. Opening the post instead."
-                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
-                                                .onFailure { message = "Couldn't open Instagram. Try your browser." }
-                                        }
-                                    }
-                                } else if (validUrl) {
+                                if (validUrl) {
                                     onPlayUrl(candidate)
                                     selected = true
                                     currentTab = 1
@@ -1323,8 +1383,28 @@ private fun UPlayHome(
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link", fontWeight = FontWeight.SemiBold)
+                            Text("Play link", fontWeight = FontWeight.SemiBold)
                         }
+                    }
+                    OutlinedButton(
+                        onClick = { startUniversalDownload(url) },
+                        enabled = !downloadBusy && url.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        shape = RoundedCornerShape(15.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = if (dark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (downloadBusy) "Downloading…" else if (downloaderReady) "Download video" else "Prepare downloader")
+                    }
+                    if (downloadBusy) {
+                        LinearProgressIndicator(
+                            progress = downloadProgress,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)),
+                            color = Color(0xFF8DD8FF),
+                            trackColor = if (dark) Color(0xFF233448) else Color(0xFFD8E8F5)
+                        )
+                        Text(message, color = secondaryText, fontSize = 12.sp, maxLines = 2)
                     }
                     Spacer(Modifier.height(22.dp))
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1835,88 +1915,6 @@ private fun extractSharedUrl(intent: Intent?): String? {
         }
     }.getOrNull()
 }
-
-private suspend fun resolvePublicInstagramVideoUrl(postUrl: String): String? = withContext(Dispatchers.IO) {
-    val connection = (URL(postUrl).openConnection() as? HttpURLConnection) ?: return@withContext null
-    try {
-        connection.instanceFollowRedirects = true
-        connection.connectTimeout = 8_000
-        connection.readTimeout = 8_000
-        connection.requestMethod = "GET"
-        connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
-        connection.setRequestProperty("Accept-Language", "en-US,en;q=0.8")
-        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
-        // No account cookies, credentials, proxies, or access-control workarounds are used.
-        if (connection.responseCode !in 200..299) return@withContext null
-        val html = connection.inputStream.use { input ->
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(8192)
-            var total = 0
-            val limit = 1_500_000
-            while (total < limit) {
-                val count = input.read(buffer, 0, minOf(buffer.size, limit - total))
-                if (count <= 0) break
-                output.write(buffer, 0, count)
-                total += count
-            }
-            output.toString("UTF-8")
-        }
-        val propertyRegex = Regex("""(?:property|name)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-        val contentRegex = Regex("""content\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-        val videoKeys = setOf("og:video", "og:video:secure_url", "og:video:url")
-        val rawMediaUrl = Regex("""<meta\b[^>]*>""", RegexOption.IGNORE_CASE)
-            .findAll(html)
-            .firstNotNullOfOrNull { match ->
-                val tag = match.value
-                val property = propertyRegex.find(tag)?.groupValues?.getOrNull(1)?.lowercase()
-                if (property in videoKeys) contentRegex.find(tag)?.groupValues?.getOrNull(1) else null
-            } ?: Regex("""["']video_url["']\s*:\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
-                .find(html)?.groupValues?.getOrNull(1)
-            ?: return@withContext null
-        val decoded = rawMediaUrl
-            .replace("&amp;", "&", ignoreCase = true)
-            .replace("\\/", "/")
-            .replace("\\u0026", "&", ignoreCase = true)
-            .replace("&#x26;", "&", ignoreCase = true)
-        val mediaUri = Uri.parse(decoded)
-        val mediaHost = mediaUri.host.orEmpty().lowercase()
-        decoded.takeIf {
-            mediaUri.scheme.equals("https", ignoreCase = true) &&
-                (mediaHost == "cdninstagram.com" || mediaHost.endsWith(".cdninstagram.com") ||
-                    mediaHost == "fbcdn.net" || mediaHost.endsWith(".fbcdn.net"))
-        }
-    } catch (_: Exception) {
-        null
-    } finally {
-        connection.disconnect()
-    }
-}
-
-private fun queuePublicMediaDownload(context: Context, mediaUrl: String, title: String): Long {
-    val mediaUri = Uri.parse(mediaUrl)
-    require(mediaUri.scheme.equals("https", ignoreCase = true))
-    val filename = "UPlay_Instagram_" + java.lang.System.currentTimeMillis() + ".mp4"
-    val request = DownloadManager.Request(mediaUri)
-        .setTitle(title)
-        .setDescription("Saving publicly accessible Instagram media")
-        .setMimeType("video/mp4")
-        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-    if (Build.VERSION.SDK_INT >= 29) {
-        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
-    } else {
-        request.setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, filename)
-    }
-    val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-    return manager.enqueue(request)
-}
-
-private fun isInstagramPostUrl(candidate: String): Boolean = runCatching {
-    val uri = Uri.parse(candidate)
-    val host = uri.host.orEmpty().lowercase()
-    val postType = uri.pathSegments.firstOrNull()?.lowercase()
-    (host == "instagram.com" || host.endsWith(".instagram.com")) &&
-        postType in setOf("p", "reel", "reels", "tv", "stories")
-}.getOrDefault(false)
 
 private fun sharedLinkMessage(url: String): String {
     val host = runCatching { Uri.parse(url).host.orEmpty().lowercase() }.getOrDefault("")
