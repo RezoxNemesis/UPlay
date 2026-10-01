@@ -694,19 +694,24 @@ class UniversalDownloadEngine(context: Context) {
     }
 
     private fun publishToDownloads(file: File): Uri {
+        if (!file.isFile || file.length() <= 0L) {
+            throw IllegalStateException("The download is empty or incomplete; UPlay did not save it.")
+        }
         if (Build.VERSION.SDK_INT < 29) {
             // App-specific external Downloads remains writable without broad storage access.
+            // Keep the completed file in place so the returned file URI stays valid.
             return Uri.fromFile(file)
         }
+        val sourceBytes = file.length()
         val extension = file.extension.lowercase()
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
             ?: if (extension in setOf("m3u8", "mpd", "ts")) "video/mp2t" else "video/mp4"
         val audioExtensions = setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac")
         val isAudio = extension in audioExtensions || mime.startsWith("audio/")
-        val safeName = file.name.replace(Regex("^uplay_\\d+_"), "")
+        val safeName = file.name.replace(Regex("^uplay_\\d+_"), "").ifBlank { "uplay_download.$extension" }
         // Android restricts the Video collection's RELATIVE_PATH to media folders
         // (for example Movies/), so Download/UPlay must use the Downloads collection.
-        // The returned content URI remains directly playable by Media3.
+        // Keep the row pending until the full file is copied and size-verified.
         val collection = if (isAudio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
             else MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val values = ContentValues().apply {
@@ -724,9 +729,29 @@ class UniversalDownloadEngine(context: Context) {
         try {
             resolver.openOutputStream(uri, "w")?.use { output ->
                 file.inputStream().use { input -> input.copyTo(output, bufferSize = 1024 * 256) }
+                output.flush()
             } ?: throw IllegalStateException("Android couldn't open the destination file.")
+
+            val copiedBytes = resolver.query(
+                uri,
+                arrayOf(MediaStore.MediaColumns.SIZE),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else -1L
+            } ?: -1L
+            if (copiedBytes >= 0L && copiedBytes != sourceBytes) {
+                throw IllegalStateException(
+                    "The save was incomplete: expected ${formatBytes(sourceBytes)}, saved ${formatBytes(copiedBytes)}. The original download was kept for retry."
+                )
+            }
+
             val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            resolver.update(uri, ready, null, null)
+            val updated = resolver.update(uri, ready, null, null)
+            if (updated <= 0) {
+                throw IllegalStateException("Android couldn't finalize the saved video. The original download was kept for retry.")
+            }
             runCatching { file.delete() }
             return uri
         } catch (error: Exception) {
