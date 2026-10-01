@@ -412,7 +412,8 @@ private fun UPlayHome(
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
     fun startUniversalDownload(candidate: String, playAfterDownload: Boolean = false) {
-        val parsed = runCatching { Uri.parse(candidate.trim()) }.getOrNull()
+        val normalizedCandidate = extractFirstHttpUrl(candidate) ?: candidate.trim()
+        val parsed = runCatching { Uri.parse(normalizedCandidate) }.getOrNull()
         val valid = parsed != null &&
             (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
             !parsed.host.isNullOrBlank()
@@ -431,7 +432,7 @@ private fun UPlayHome(
         }
         uiScope.launch {
             try {
-                val downloadedUri = downloadEngine.download(candidate, downloadQuality) { percent, status ->
+                val downloadedUri = downloadEngine.download(normalizedCandidate, downloadQuality) { percent, status ->
                     uiScope.launch {
                         downloadProgress = (percent / 100f).coerceIn(0f, 1f)
                         if (status.isNotBlank()) message = status
@@ -1037,7 +1038,7 @@ private fun UPlayHome(
                             }
                             OutlinedButton(
                                 onClick = {
-                                    val candidate = url.trim()
+                                    val candidate = extractFirstHttpUrl(url) ?: url.trim()
                                     val parsed = runCatching { Uri.parse(candidate) }.getOrNull()
                                     val validUrl = parsed != null &&
                                         (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
@@ -2170,13 +2171,9 @@ private fun FilmRollIndicator(darkTheme: Boolean, modifier: Modifier = Modifier)
     }
 }
 
-private fun extractSharedUrl(intent: Intent?): String? {
-    if (intent == null || intent.action != Intent.ACTION_SEND) return null
-    val sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
-    val candidate = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
-        .find(sharedText)?.value
-        ?.trimEnd('.', ',', '!', '?', ')', ']', '}')
-        ?: return null
+private fun extractFirstHttpUrl(input: String): String? {
+    val candidate = Regex("""https?://[^\\s<>"']+""", RegexOption.IGNORE_CASE)
+        .find(input)?.value?.trimEnd('.', ',', ';', '!', '?', ')', ']', '}') ?: return null
     return runCatching {
         val uri = Uri.parse(candidate)
         candidate.takeIf {
@@ -2184,6 +2181,12 @@ private fun extractSharedUrl(intent: Intent?): String? {
                 !uri.host.isNullOrBlank()
         }
     }.getOrNull()
+}
+
+private fun extractSharedUrl(intent: Intent?): String? {
+    if (intent == null || intent.action != Intent.ACTION_SEND) return null
+    val sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+    return extractFirstHttpUrl(sharedText)
 }
 
 private fun sharedLinkMessage(url: String): String {
