@@ -1416,12 +1416,13 @@ private fun UPlayHome(
                                             // Resolve page URLs through yt-dlp first so supported sites open
                                             // as real media in UPlay's player. Only fall back to the site's
                                             // own embedded player when stream extraction fails.
-                                            webPlaybackUrl = null
+                                            webPlaybackUrl = candidate
                                             selected = true
                                             isMusicMode = false
                                             currentTab = 1
+                                            controlsVisible = true
                                             playbackError = null
-                                            startUniversalDownload(candidate, playAfterDownload = true)
+                                            message = "Opening the website in UPlay. Use Download video separately to save accessible media."
                                         } else {
                                             webPlaybackUrl = null
                                             onPlayUrl(candidate)
@@ -1983,12 +1984,13 @@ private fun UPlayHome(
                                         "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
                                     )
                                     if (!directMedia) {
-                                        webPlaybackUrl = null
-                                        selected = true
-                                        isMusicMode = false
-                                        currentTab = 1
-                                        playbackError = null
-                                        startUniversalDownload(candidate, playAfterDownload = true)
+                                        webPlaybackUrl = candidate
+                                            selected = true
+                                            isMusicMode = false
+                                            currentTab = 1
+                                            controlsVisible = true
+                                            playbackError = null
+                                            message = "Opening the website in UPlay. Use Download video separately to save accessible media."
                                     } else {
                                         webPlaybackUrl = null
                                         onPlayUrl(candidate)
