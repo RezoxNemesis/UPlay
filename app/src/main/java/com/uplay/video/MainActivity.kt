@@ -911,7 +911,7 @@ private fun UPlayHome(
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(5.dp))
-                                Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link"", fontWeight = FontWeight.Bold)
+                                Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link", fontWeight = FontWeight.Bold)
                             }
                         }
                         OutlinedButton(
@@ -1323,7 +1323,7 @@ private fun UPlayHome(
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link"", fontWeight = FontWeight.SemiBold)
+                            Text(if (isInstagramPostUrl(url.trim())) "Download Instagram" else "Play link", fontWeight = FontWeight.SemiBold)
                         }
                     }
                     Spacer(Modifier.height(22.dp))
