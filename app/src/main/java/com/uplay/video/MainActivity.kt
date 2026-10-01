@@ -107,6 +107,7 @@ import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -473,9 +474,18 @@ private fun UPlayHome(
             } catch (error: Exception) {
                 val detail = error.message.orEmpty()
                 message = when {
+                    detail.contains("signed-in session", true) || detail.contains("verification", true) ||
+                        detail.contains("checkpoint", true) ->
+                        detail.take(260)
                     detail.contains("private", true) || detail.contains("login", true) ||
                         detail.contains("sign in", true) || detail.contains("authentication", true) ->
-                        "This source requires access UPlay doesn't have. Try a publicly accessible link."
+                        "This source requires access UPlay doesn't currently have. Try a public post URL, or open the post in its official app."
+                    detail.contains("HTTP Error 403", true) || detail.contains("forbidden", true) ->
+                        "The source refused the download request (403). It may require an authorized session or restrict external downloads."
+                    detail.contains("HTTP Error 429", true) || detail.contains("too many requests", true) ->
+                        "The source is rate-limiting requests. Wait a while, then retry."
+                    detail.contains("primary directory", true) || detail.contains("not allowed for content", true) ->
+                        "Android rejected the save location. The latest build routes downloads through the Downloads collection; retry after updating."
                     detail.contains("unsupported", true) || detail.contains("no video", true) ||
                         detail.contains("unable to extract", true) || detail.contains("not a valid", true) ->
                         "No downloadable stream was found. The site may be unsupported or restrict external extraction."
@@ -897,7 +907,7 @@ private fun UPlayHome(
                                         }
                                     }
                             )
-                            Column(Modifier.fillMaxSize()) {
+                            Column(Modifier.fillMaxSize().clipToBounds()) {
                             AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
                                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xA6081423), Color.Transparent, Color(0xD906101D))))) {
                                     if (locked) {
@@ -938,7 +948,7 @@ private fun UPlayHome(
                                         RotaryControlDial(
                                             open = radialOpen,
                                             onToggle = { radialOpen = !radialOpen },
-                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(240.dp),
+                                            modifier = Modifier.align(Alignment.TopEnd).offset(x = 92.dp).padding(top = 8.dp).size(240.dp),
                                             onAction = { action ->
                                                 radialOpen = false
                                                 controlsVisible = true
@@ -1185,7 +1195,7 @@ private fun UPlayHome(
                                 text = playbackError ?: message,
                                 color = if (playbackError != null) Color(0xFFFFB4AB) else Muted,
                                 fontSize = 12.sp,
-                                maxLines = 2,
+                                maxLines = 4,
                                 modifier = Modifier.fillMaxWidth()
                             )
                             if (playbackError != null) {
@@ -1867,7 +1877,7 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
             .setMaxStreams(3)
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build()
             )
@@ -1879,12 +1889,12 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
         soundPool.setOnLoadCompleteListener { _, loadedId, status ->
             if (status == 0 && loadedId == soundId) soundReady = true
         }
-        val file = File(dialContext.cacheDir, "uplay_rotary_tick_v2.wav")
+        val file = File(dialContext.cacheDir, "uplay_rotary_tick_v3.wav")
         runCatching {
             if (!file.exists() || file.length() < 100L) {
                 val sampleRate = 22050
                 // A short layered mechanical detent: soft low body + crisp, damped click.
-                val sampleCount = (sampleRate * 0.065).toInt()
+                val sampleCount = (sampleRate * 0.078).toInt()
                 val pcmBytes = sampleCount * 2
                 val wav = ByteBuffer.allocate(44 + pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
                 wav.put("RIFF".toByteArray(Charsets.US_ASCII))
@@ -1902,13 +1912,13 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
                 wav.putInt(pcmBytes)
                 for (i in 0 until sampleCount) {
                     val t = i.toDouble() / sampleRate
-                    val envelope = kotlin.math.exp(-t * 58.0)
-                    val frequency = 1350.0 - 650.0 * (i.toDouble() / sampleCount)
+                    val envelope = kotlin.math.exp(-t * 43.0)
+                    val frequency = 1180.0 - 430.0 * (i.toDouble() / sampleCount)
                     val fundamental = sin(2.0 * PI * frequency * t)
-                    val overtone = sin(2.0 * PI * frequency * 2.15 * t) * 0.16
-                    val lowBody = sin(2.0 * PI * 180.0 * t) * kotlin.math.exp(-t * 40.0) * 0.22
-                    val brightClick = sin(2.0 * PI * 3100.0 * t) * kotlin.math.exp(-t * 220.0) * 0.14
-                    val sample = ((fundamental * envelope + overtone * envelope + lowBody + brightClick) * 0.48 * Short.MAX_VALUE)
+                    val overtone = sin(2.0 * PI * frequency * 2.05 * t) * 0.19
+                    val lowBody = sin(2.0 * PI * 155.0 * t) * kotlin.math.exp(-t * 31.0) * 0.27
+                    val brightClick = sin(2.0 * PI * 2850.0 * t) * kotlin.math.exp(-t * 175.0) * 0.17
+                    val sample = ((fundamental * envelope + overtone * envelope + lowBody + brightClick) * 0.62 * Short.MAX_VALUE)
                         .toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
                     wav.putShort(sample.toShort())
                 }
@@ -1919,7 +1929,7 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
         onDispose { soundPool.release() }
     }
     return remember(soundPool, soundId, soundReady) {
-        { if (soundReady && soundId != 0) soundPool.play(soundId, 0.7f, 0.7f, 1, 0, 1f) }
+        { if (soundReady && soundId != 0) soundPool.play(soundId, 0.92f, 0.92f, 1, 0, 1f) }
     }
 }
 
@@ -1956,7 +1966,9 @@ private fun RotaryControlDial(
     val pageCount = (actionCatalog.size + pageSize - 1) / pageSize
     val actions = actionCatalog.drop(actionPage * pageSize).take(pageSize)
     fun pageFor(degrees: Float): Int {
-        val page = kotlin.math.floor(degrees / 120f).toInt()
+        // Change the three-action half-wheel only after crossing a half-page detent,
+        // so a tiny counter-clockwise movement at zero does not jump to the last page.
+        val page = (degrees / 120f).roundToInt()
         return ((page % pageCount) + pageCount) % pageCount
     }
     val unfold by animateFloatAsState(
@@ -1976,7 +1988,7 @@ private fun RotaryControlDial(
                 var lastAngle = Float.NaN
                 var lastAngularDelta = 0f
                 var lastPage = pageFor(rotationAnim.value)
-                var lastSoundDetent = kotlin.math.floor(rotationAnim.value / 30f).toInt()
+                var lastSoundDetent = kotlin.math.floor(rotationAnim.value / 18f).toInt()
                 detectDragGestures(
                     onDragStart = { point ->
                         val center = Offset(size.width / 2f, size.height / 2f)
@@ -1985,7 +1997,7 @@ private fun RotaryControlDial(
                         lastAngle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
                         lastAngularDelta = 0f
                         lastPage = pageFor(rotationAnim.value)
-                        lastSoundDetent = kotlin.math.floor(rotationAnim.value / 30f).toInt()
+                        lastSoundDetent = kotlin.math.floor(rotationAnim.value / 18f).toInt()
                     },
                     onDrag = { change, _ ->
                         val center = Offset(size.width / 2f, size.height / 2f)
@@ -2003,7 +2015,7 @@ private fun RotaryControlDial(
                                     dialScope.launch {
                                         val next = rotationAnim.value + delta
                                         rotationAnim.snapTo(next)
-                                        val nextSoundDetent = kotlin.math.floor(next / 30f).toInt()
+                                        val nextSoundDetent = kotlin.math.floor(next / 18f).toInt()
                                         if (nextSoundDetent != lastSoundDetent) {
                                             lastSoundDetent = nextSoundDetent
                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -2026,12 +2038,12 @@ private fun RotaryControlDial(
                             if (kotlin.math.abs(lastAngularDelta) > 0.5f) {
                                 runCatching {
                                     rotationAnim.animateDecay(
-                                        initialVelocity = lastAngularDelta * 18f,
-                                        animationSpec = exponentialDecay(frictionMultiplier = 2.8f),
+                                        initialVelocity = lastAngularDelta * 22f,
+                                        animationSpec = exponentialDecay(frictionMultiplier = 1.9f),
                                         block = {
                                             val animatedPage = pageFor(value)
                                             if (animatedPage != actionPage) actionPage = animatedPage
-                                            val animatedTick = kotlin.math.floor(value / 30f).toInt()
+                                            val animatedTick = kotlin.math.floor(value / 18f).toInt()
                                             if (animatedTick != lastSoundDetent) {
                                                 lastSoundDetent = animatedTick
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -2044,7 +2056,7 @@ private fun RotaryControlDial(
                             val detent = (rotationAnim.value / 120f).roundToInt() * 120f
                             rotationAnim.animateTo(
                                 detent,
-                                spring(dampingRatio = 0.76f, stiffness = 360f),
+                                spring(dampingRatio = 0.88f, stiffness = 170f),
                                 block = { actionPage = pageFor(value) }
                             )
                             actionPage = pageFor(rotationAnim.value)
@@ -2059,7 +2071,7 @@ private fun RotaryControlDial(
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val center = Offset(size.width / 2f, size.height / 2f)
-            val radius = size.minDimension * 0.39f
+            val radius = size.minDimension * 0.455f
             if (unfold > 0.01f) {
                 drawCircle(
                     color = Color(0xFF8DD8FF).copy(alpha = 0.12f * unfold),
@@ -2095,9 +2107,9 @@ private fun RotaryControlDial(
             }
         }
 
-        val controlRadius = 82f * unfold
+        val controlRadius = 96f * unfold
         actions.forEachIndexed { index, item ->
-            val angle = Math.toRadians((-90f + index * 120f + rotation).toDouble())
+            val angle = Math.toRadians((135f + index * 45f + rotation).toDouble())
             val x = (kotlin.math.cos(angle) * controlRadius).dp
             val y = (kotlin.math.sin(angle) * controlRadius).dp
             RadialControl(
