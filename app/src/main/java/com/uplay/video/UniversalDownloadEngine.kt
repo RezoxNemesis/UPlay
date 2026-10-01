@@ -101,22 +101,27 @@ class UniversalDownloadEngine(context: Context) {
         }
         if (mergedUri != null) return@withContext mergedUri
 
-        // Public Instagram pages sometimes serve a different format to mobile browsers.
+        // Public Instagram pages can expose different formats to mobile browsers.
+        // Retry two common mobile clients without bypassing private/login-only access.
         if (isInstagramSource) {
-            workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
-            val mobileUri = try {
-                val mobileFile = downloadFormat(
-                    url, startedAt, "instagram_mobile", singleFormat, 0f, 0.95f, onProgress,
-                    userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-                )
-                publishToDownloads(mobileFile)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                extractionFailure = error
-                null
+            val mobileAgents = listOf(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
+            )
+            for ((index, mobileAgent) in mobileAgents.withIndex()) {
+                workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
+                try {
+                    val mobileFile = downloadFormat(
+                        url, startedAt, "instagram_mobile_$index", singleFormat,
+                        0f, 0.95f, onProgress, userAgent = mobileAgent
+                    )
+                    return@withContext publishToDownloads(mobileFile)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    extractionFailure = error
+                }
             }
-            if (mobileUri != null) return@withContext mobileUri
         }
 
         // A single-file format is a compatibility fallback for sources without separable tracks.
