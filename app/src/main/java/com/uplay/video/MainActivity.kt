@@ -33,6 +33,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -577,21 +578,40 @@ private fun UPlayHome(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("PLAYER", fontSize = 10.sp, letterSpacing = 1.8.sp, color = Green, fontWeight = FontWeight.Bold)
-                                Text(if (selected) "Now playing" else "Ready to play", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text("U P L A Y   /   PLAYER", fontSize = 10.sp, letterSpacing = 1.5.sp, color = Color(0xFF8DD8FF), fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (selected) player?.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty().ifBlank { "Now playing" }
+                                    else "Your next watch",
+                                    fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1
+                                )
                             }
-                            Surface(color = Color(0xFF152B26), shape = RoundedCornerShape(50)) {
-                                Text(if (!selected) "READY" else if (isPlaying) "PLAYING" else "PAUSED",
-                                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-                                    color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Surface(
+                                color = Color(0xFF102637),
+                                shape = RoundedCornerShape(50),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x554DBFFF))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(Modifier.size(6.dp).background(if (!selected) Color(0xFF718198) else if (isPlaying) Color(0xFF8DD8FF) else Color(0xFFB8C8D8), CircleShape))
+                                    Text(if (!selected) "READY" else if (isPlaying) "PLAYING" else "PAUSED",
+                                        color = Color(0xFFB9E9FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
 
                     Box(
                         modifier = Modifier.weight(1f).fillMaxWidth()
-                            .clip(if (fullScreen || landscape) RoundedCornerShape(0.dp) else RoundedCornerShape(22.dp))
-                            .background(Color.Black)
+                            .clip(if (fullScreen || landscape) RoundedCornerShape(0.dp) else RoundedCornerShape(26.dp))
+                            .background(Brush.verticalGradient(listOf(Color(0xFF0B1725), Color.Black, Color(0xFF08111D))))
+                            .border(
+                                width = if (fullScreen || landscape) 0.dp else 1.dp,
+                                color = Color(0xFF26384B),
+                                shape = if (fullScreen || landscape) RoundedCornerShape(0.dp) else RoundedCornerShape(26.dp)
+                            )
                     ) {
                         if (selected && player != null && player.currentMediaItem != null) {
                             if (isMusicMode) {
@@ -655,7 +675,7 @@ private fun UPlayHome(
                             )
                             Column(Modifier.fillMaxSize()) {
                             AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
-                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xB8000000), Color.Transparent, Color(0xD9000000))))) {
+                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xA6081423), Color.Transparent, Color(0xD906101D))))) {
                                     if (locked) {
                                         IconButton(
                                             onClick = { locked = false; controlsVisible = true },
@@ -663,31 +683,38 @@ private fun UPlayHome(
                                                 .background(Color(0x990B101B), RoundedCornerShape(50))
                                         ) { Icon(Icons.Default.LockOpen, "Unlock controls", tint = Green) }
                                     } else {
-                                        Row(
-                                            modifier = Modifier.align(Alignment.Center),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(20.dp)
+                                        AnimatedVisibility(
+                                            visible = !radialOpen,
+                                            enter = fadeIn() + scaleIn(),
+                                            exit = fadeOut() + scaleOut(),
+                                            modifier = Modifier.align(Alignment.Center)
                                         ) {
-                                            IconButton(
-                                                onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)); controlsVisible = true },
-                                                modifier = Modifier.size(48.dp).background(Color(0x66070B12), CircleShape)
-                                            ) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp)) }
-                                            IconButton(
-                                                onClick = { if (player.isPlaying) player.pause() else player.play(); controlsVisible = true },
-                                                modifier = Modifier.size(66.dp).background(Brush.linearGradient(listOf(Color(0xFF8BE7FF), Color(0xFF4BAEFF))), CircleShape)
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(24.dp)
                                             ) {
-                                                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                    if (isPlaying) "Pause" else "Play", tint = Ink, modifier = Modifier.size(42.dp))
+                                                IconButton(
+                                                    onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)); controlsVisible = true },
+                                                    modifier = Modifier.size(46.dp).background(Color(0x77070D18), CircleShape)
+                                                ) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(28.dp)) }
+                                                IconButton(
+                                                    onClick = { if (player.isPlaying) player.pause() else player.play(); controlsVisible = true },
+                                                    modifier = Modifier.size(72.dp).background(Brush.linearGradient(listOf(Color(0xFFB3F0FF), Color(0xFF62BFFF))), CircleShape)
+                                                        .border(1.dp, Color(0xAAE0FAFF), CircleShape)
+                                                ) {
+                                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                        if (isPlaying) "Pause" else "Play", tint = Ink, modifier = Modifier.size(42.dp))
+                                                }
+                                                IconButton(
+                                                    onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L)); controlsVisible = true },
+                                                    modifier = Modifier.size(46.dp).background(Color(0x77070D18), CircleShape)
+                                                ) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(28.dp)) }
                                             }
-                                            IconButton(
-                                                onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L)); controlsVisible = true },
-                                                modifier = Modifier.size(48.dp).background(Color(0x66070B12), CircleShape)
-                                            ) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(30.dp)) }
                                         }
                                         RotaryControlDial(
                                             open = radialOpen,
                                             onToggle = { radialOpen = !radialOpen },
-                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(198.dp),
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp).size(226.dp),
                                             onAction = { action ->
                                                 radialOpen = false
                                                 controlsVisible = true
@@ -730,7 +757,11 @@ private fun UPlayHome(
                                         )
                                         Column(
                                             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                                .padding(horizontal = 10.dp, vertical = 10.dp)
+                                                .clip(RoundedCornerShape(18.dp))
+                                                .background(Color(0xB807111E))
+                                                .border(1.dp, Color(0x332F80A9), RoundedCornerShape(18.dp))
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
                                             verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
                                             val duration = (player.duration).takeIf { it > 0L } ?: 0L
@@ -781,7 +812,7 @@ private fun UPlayHome(
                                 onClick = { picker.launch(arrayOf("video/*")) },
                                 modifier = Modifier.weight(0.9f).height(48.dp),
                                 shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Blue)
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8DD8FF), contentColor = Color(0xFF081321))
                             ) {
                                 Icon(Icons.Default.FolderOpen, contentDescription = null)
                                 Spacer(Modifier.width(7.dp))
@@ -810,7 +841,7 @@ private fun UPlayHome(
                                 },
                                 modifier = Modifier.weight(1f).height(48.dp),
                                 shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Green)
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF8DD8FF))
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(5.dp))
@@ -835,10 +866,14 @@ private fun UPlayHome(
                             leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = Green) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(18.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Green, unfocusedBorderColor = Color(0xFF334154),
-                                focusedTextColor = Color.White, unfocusedTextColor = Color.White
+                                focusedBorderColor = Color(0xFF8DD8FF), unfocusedBorderColor = Color(0xFF2A4055),
+                                focusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
+                                unfocusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
+                                cursorColor = Color(0xFF8DD8FF),
+                                focusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White,
+                                unfocusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White
                             )
                         )
                         if (message.isNotBlank()) {
