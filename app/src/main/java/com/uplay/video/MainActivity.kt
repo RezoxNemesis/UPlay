@@ -400,7 +400,7 @@ private fun UPlayHome(
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
-    fun startUniversalDownload(candidate: String) {
+    fun startUniversalDownload(candidate: String, playAfterDownload: Boolean = false) {
         val parsed = runCatching { Uri.parse(candidate.trim()) }.getOrNull()
         val valid = parsed != null &&
             (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
@@ -413,20 +413,33 @@ private fun UPlayHome(
         downloadBusy = true
         downloadProgress = 0f
         message = when {
+            playAfterDownload -> "Resolving the video link for playback…"
             downloaderReady -> "Finding $downloadQuality video streams…"
             downloaderInitError != null -> "Retrying downloader initialization…"
             else -> "Preparing universal downloader…"
         }
         uiScope.launch {
             try {
-                downloadEngine.download(candidate, downloadQuality) { percent, status ->
+                val downloadedUri = downloadEngine.download(candidate, downloadQuality) { percent, status ->
                     uiScope.launch {
                         downloadProgress = (percent / 100f).coerceIn(0f, 1f)
                         if (status.isNotBlank()) message = status
                     }
                 }
+                if (playAfterDownload) {
+                    player?.setMediaItem(MediaItem.fromUri(downloadedUri))
+                    player?.prepare()
+                    player?.playWhenReady = true
+                    selected = true
+                    isMusicMode = false
+                    currentTab = 1
+                    controlsVisible = true
+                    playbackError = null
+                }
                 downloadProgress = 1f
-                message = if (Build.VERSION.SDK_INT >= 29) {
+                message = if (playAfterDownload) {
+                    "Video downloaded and opened in the player."
+                } else if (Build.VERSION.SDK_INT >= 29) {
                     "Download complete — saved to Downloads/UPlay."
                 } else {
                     "Download complete — saved in UPlay app downloads."
@@ -948,17 +961,30 @@ private fun UPlayHome(
                                         (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                         !parsed.host.isNullOrBlank()
                                     if (validUrl) {
-                                        onPlayUrl(candidate)
-                                        selected = true
-                                        isMusicMode = false
-                                        controlsVisible = true
-                                        playbackError = null
-                                        val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
-                                        recentVideos.removeAll { it.uri == candidate }
-                                        recentVideos.add(0, entry)
-                                        while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
-                                        saveRecentVideos(context, recentVideos)
-                                        message = "Loading video link…"
+                                        val host = parsed?.host.orEmpty().lowercase()
+                                        val pathPart = parsed?.path.orEmpty().lowercase()
+                                        val extension = pathPart.substringAfterLast('/').substringAfterLast('.', "")
+                                        val directMedia = extension in setOf(
+                                            "mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp",
+                                            "m3u8", "mpd", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac"
+                                        )
+                                        if (!directMedia) {
+                                            // A social post URL is an HTML page, not a playable media stream.
+                                            // Resolve/download it first instead of feeding HTML to ExoPlayer.
+                                            startUniversalDownload(candidate, playAfterDownload = true)
+                                        } else {
+                                            onPlayUrl(candidate)
+                                            selected = true
+                                            isMusicMode = false
+                                            controlsVisible = true
+                                            playbackError = null
+                                            val entry = RecentVideo(candidate, candidate.substringAfterLast('/').ifBlank { candidate }, 0L, true)
+                                            recentVideos.removeAll { it.uri == candidate }
+                                            recentVideos.add(0, entry)
+                                            while (recentVideos.size > 30) recentVideos.removeAt(recentVideos.lastIndex)
+                                            saveRecentVideos(context, recentVideos)
+                                            message = "Loading video link…"
+                                        }
                                     } else message = "Enter a valid HTTP(S) link first."
                                 },
                                 modifier = Modifier.weight(1f).height(48.dp),
