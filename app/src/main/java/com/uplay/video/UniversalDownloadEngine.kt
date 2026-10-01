@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -151,6 +152,24 @@ class UniversalDownloadEngine(context: Context) {
         }
         if (singleUri != null) return@withContext singleUri
 
+        // Some public Instagram pages expose a playable CDN URL in Open Graph metadata
+        // even when the extractor cannot resolve the post. Never attempt to log in or
+        // bypass private media; this only follows media explicitly exposed by the page.
+        if (isInstagramSource) {
+            onProgress(0f, "Checking publicly exposed Reel media…")
+            val publicMediaUrl = runCatching { resolveInstagramPublicMediaUrl(url) }.getOrNull()
+            if (publicMediaUrl != null) {
+                try {
+                    val publicMediaFile = downloadDirectMedia(publicMediaUrl, startedAt, onProgress)
+                    if (publicMediaFile != null) return@withContext publishToDownloads(publicMediaFile)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    extractionFailure = error
+                }
+            }
+        }
+
         onProgress(0f, "Trying direct-file recovery…")
         var directFailure: Exception? = null
         val directFile = try {
@@ -227,6 +246,58 @@ class UniversalDownloadEngine(context: Context) {
             ?.maxByOrNull { it.lastModified() }
             ?: throw IllegalStateException("The $label stream did not produce a complete file.")
     }
+    private fun resolveInstagramPublicMediaUrl(pageUrl: String): String? {
+        val connection = (URL(pageUrl).openConnection() as? HttpURLConnection) ?: return null
+        val html = try {
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = 12_000
+            connection.readTimeout = 15_000
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            connection.setRequestProperty("Accept-Language", "en-US,en;q=0.8")
+            connection.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
+            )
+            if (connection.responseCode !in 200..299) return null
+            val type = connection.contentType.orEmpty().substringBefore(';').trim().lowercase()
+            if (type.isNotBlank() && type !in setOf("text/html", "application/xhtml+xml")) return null
+            connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (total < 1_500_000) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 1_500_000 - total))
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    total += count
+                }
+                output.toString(Charsets.UTF_8.name())
+            }
+        } finally {
+            connection.disconnect()
+        }
+
+        val videoMetaTags = Regex("""<meta\\b[^>]*>""", RegexOption.IGNORE_CASE)
+        for (tagMatch in videoMetaTags.findAll(html)) {
+            val tag = tagMatch.value
+            val property = Regex("""(?:property|name)\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(tag)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
+            if (property !in setOf("og:video", "og:video:url", "og:video:secure_url", "twitter:player:stream")) continue
+            val content = Regex("""content\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(tag)?.groupValues?.getOrNull(1) ?: continue
+            val candidate = content
+                .replace("&amp;", "&", ignoreCase = true)
+                .replace("&#x26;", "&", ignoreCase = true)
+                .replace("\\\\/", "/")
+                .replace("\\\\u0026", "&", ignoreCase = true)
+            val parsed = runCatching { Uri.parse(candidate) }.getOrNull() ?: continue
+            if ((parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
+                !parsed.host.isNullOrBlank()) return candidate
+        }
+        return null
+    }
+
     private suspend fun downloadDirectMedia(
         rawUrl: String,
         startedAt: Long,
