@@ -1866,7 +1866,7 @@ private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
         soundPool.setOnLoadCompleteListener { _, loadedId, status ->
             if (status == 0 && loadedId == soundId) soundReady = true
         }
-        val file = File(dialContext.cacheDir, "uplay_rotary_tick.wav")
+        val file = File(dialContext.cacheDir, "uplay_rotary_tick_v2.wav")
         runCatching {
             if (!file.exists() || file.length() < 100L) {
                 val sampleRate = 22050
