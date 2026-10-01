@@ -10,15 +10,20 @@ import android.webkit.MimeTypeMap
 import dev.ffmpegkit_maintained.ytdlp.DownloadProgressCallback
 import dev.ffmpegkit_maintained.ytdlp.YtDlp
 import dev.ffmpegkit_maintained.ytdlp.YtDlpRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.roundToInt
 
 /**
  * Multi-source downloader backed by yt-dlp's site extractors.
- * It handles supported page URLs, direct media files, and supported segmented
- * streams. It intentionally does not supply cookies, credentials, or DRM bypasses.
+ * It handles supported page URLs and direct media files, with a resumable HTTP
+ * fallback for direct media URLs. It does not supply cookies or DRM bypasses.
  */
 class UniversalDownloadEngine(context: Context) {
     private val appContext = context.applicationContext
@@ -60,27 +65,149 @@ class UniversalDownloadEngine(context: Context) {
             addOption("-f", "best")
         }
 
-        onProgress(0f, "Finding available video streams…")
-        val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, line ->
-            val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 100f) else 0f
-            val status = when {
-                safeProgress > 0f -> "Downloading ${safeProgress.roundToInt()}%" +
-                    if (eta > 0L) " · about ${eta}s left" else ""
-                line.isNotBlank() -> line.take(140)
-                else -> "Resolving media source…"
+        val prefix = "uplay_${startedAt}_"
+        var extractionFailure: Exception? = null
+        val extractedUri = try {
+            onProgress(0f, "Finding available video streams…")
+            val response = YtDlp.execute(request, DownloadProgressCallback { progress, eta, line ->
+                val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 100f) else 0f
+                val status = when {
+                    safeProgress > 0f -> "Downloading ${safeProgress.roundToInt()}%" +
+                        if (eta > 0L) " · about ${eta}s left" else ""
+                    line.isNotBlank() -> line.take(140)
+                    else -> "Resolving media source…"
+                }
+                onProgress(safeProgress, status)
+            })
+            if (!response.isSuccess) {
+                throw IllegalStateException(response.errorOutput.ifBlank { "The media extractor returned exit code ${response.exitCode}." })
             }
-            onProgress(safeProgress, status)
-        })
-        if (!response.isSuccess) {
-            throw IllegalStateException(response.errorOutput.ifBlank { "The media extractor returned exit code ${response.exitCode}." })
+            val completed = workDir.listFiles()
+                ?.filter { it.isFile && it.name.startsWith(prefix) && !it.name.endsWith(".part") && it.length() > 0L }
+                ?.maxByOrNull { it.lastModified() }
+                ?: throw IllegalStateException("The extractor finished but no completed media file was found.")
+            publishToDownloads(completed)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            extractionFailure = error
+            null
+        }
+        if (extractedUri != null) return@withContext extractedUri
+
+        onProgress(0f, "Trying direct-file recovery…")
+        val directFile = runCatching { downloadDirectMedia(url, startedAt, onProgress) }.getOrNull()
+        if (directFile != null) return@withContext publishToDownloads(directFile)
+        throw IllegalStateException(
+            extractionFailure?.message?.take(180)
+                ?: "No complete downloadable media stream was found."
+        )
+    }
+
+    /**
+     * Last-resort path for genuine direct media URLs. It rejects HTML pages and
+     * manifests, resumes partial files with HTTP Range when supported, and retries
+     * transient network interruptions without treating a post page as a video.
+     */
+    private fun downloadDirectMedia(
+        rawUrl: String,
+        startedAt: Long,
+        onProgress: (Float, String) -> Unit
+    ): File? {
+        val uri = Uri.parse(rawUrl)
+        val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
+        val knownMediaExtensions = setOf(
+            "mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp", "mpeg", "mpg",
+            "ts", "m4a", "mp3", "aac", "ogg", "opus", "wav", "flac"
+        )
+        if (extension in setOf("m3u8", "mpd", "m3u")) return null
+
+        val probe = (URL(rawUrl).openConnection() as? HttpURLConnection) ?: return null
+        val mime: String
+        try {
+            probe.instanceFollowRedirects = true
+            probe.connectTimeout = 15_000
+            probe.readTimeout = 30_000
+            probe.requestMethod = "GET"
+            probe.setRequestProperty("Accept", "*/*")
+            probe.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36"
+            )
+            if (probe.responseCode !in 200..299) return null
+            mime = probe.contentType.orEmpty().substringBefore(';').trim().lowercase()
+            if (mime.contains("mpegurl") || mime.contains("dash+xml") ||
+                mime == "text/html" || mime.contains("json") || mime.startsWith("image/")) return null
+            val isMedia = mime.startsWith("video/") || mime.startsWith("audio/") ||
+                (extension in knownMediaExtensions && (mime.isBlank() || mime == "application/octet-stream" ||
+                    mime == "binary/octet-stream"))
+            if (!isMedia) return null
+        } finally {
+            probe.disconnect()
         }
 
-        val prefix = "uplay_${startedAt}_"
-        val completed = workDir.listFiles()
-            ?.filter { it.isFile && it.name.startsWith(prefix) && !it.name.endsWith(".part") && it.length() > 0L }
-            ?.maxByOrNull { it.lastModified() }
-            ?: throw IllegalStateException("The extractor finished but no completed media file was found.")
-        publishToDownloads(completed)
+        val outputExtension = extension.takeIf { it in knownMediaExtensions }
+            ?: MimeTypeMap.getSingleton().getExtensionFromMimeType(mime).orEmpty().ifBlank { "mp4" }
+        val part = File(workDir, "uplay_${startedAt}_direct.$outputExtension.part")
+        val finalFile = File(workDir, "uplay_${startedAt}_direct.$outputExtension")
+        var attempt = 0
+        var lastError: Exception? = null
+        while (attempt < 3) {
+            attempt++
+            val existing = part.takeIf { it.exists() }?.length() ?: 0L
+            val connection = (URL(rawUrl).openConnection() as? HttpURLConnection) ?: return null
+            try {
+                connection.instanceFollowRedirects = true
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 30_000
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("Accept", "*/*")
+                connection.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36"
+                )
+                if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
+                val code = connection.responseCode
+                if (code !in 200..299) return null
+                val append = existing > 0L && code == HttpURLConnection.HTTP_PARTIAL
+                val offset = if (append) existing else 0L
+                val expectedLength = connection.contentLengthLong.takeIf { it >= 0L }?.let { it + offset }
+                if (!append && part.exists()) part.delete()
+                BufferedInputStream(connection.inputStream).use { input ->
+                    FileOutputStream(part, append).use { output ->
+                        val buffer = ByteArray(128 * 1024)
+                        var total = offset
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                            total += count
+                            if (expectedLength != null && expectedLength > 0L) {
+                                val percent = (total * 100f / expectedLength).coerceIn(0f, 100f)
+                                onProgress(percent, "Downloading ${percent.roundToInt()}% · direct media")
+                            } else {
+                                onProgress(0f, "Downloading direct media…")
+                            }
+                        }
+                        output.fd.sync()
+                    }
+                }
+                if (expectedLength != null && part.length() < expectedLength) {
+                    lastError = IllegalStateException("Direct download ended before all bytes arrived.")
+                    if (attempt < 3) continue
+                    throw lastError!!
+                }
+                if (finalFile.exists()) finalFile.delete()
+                if (!part.renameTo(finalFile)) throw IllegalStateException("Could not finalize the downloaded file.")
+                return finalFile
+            } catch (error: Exception) {
+                lastError = error
+                if (attempt >= 3) throw error
+            } finally {
+                connection.disconnect()
+            }
+        }
+        throw lastError ?: IllegalStateException("Direct download failed.")
     }
 
     private fun publishToDownloads(file: File): Uri {
