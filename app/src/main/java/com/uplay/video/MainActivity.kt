@@ -2,6 +2,14 @@ package com.uplay.video
 
 import android.app.Activity
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.SoundPool
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.PI
+import kotlin.math.sin
 import android.Manifest
 import android.content.ContentUris
 import android.content.ContextWrapper
@@ -1832,6 +1840,66 @@ private fun CinematicSeekBar(
 }
 
 @Composable
+private fun rememberRotaryTickSound(dialContext: Context): () -> Unit {
+    val soundPool = remember(dialContext) {
+        SoundPool.Builder()
+            .setMaxStreams(3)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .build()
+    }
+    var soundId by remember(soundPool) { mutableIntStateOf(0) }
+    var soundReady by remember(soundPool) { mutableStateOf(false) }
+    DisposableEffect(soundPool) {
+        soundPool.setOnLoadCompleteListener { _, loadedId, status ->
+            if (status == 0 && loadedId == soundId) soundReady = true
+        }
+        val file = File(dialContext.cacheDir, "uplay_rotary_tick.wav")
+        runCatching {
+            if (!file.exists() || file.length() < 100L) {
+                val sampleRate = 22050
+                val sampleCount = (sampleRate * 0.045).toInt()
+                val pcmBytes = sampleCount * 2
+                val wav = ByteBuffer.allocate(44 + pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
+                wav.put("RIFF".toByteArray(Charsets.US_ASCII))
+                wav.putInt(36 + pcmBytes)
+                wav.put("WAVE".toByteArray(Charsets.US_ASCII))
+                wav.put("fmt ".toByteArray(Charsets.US_ASCII))
+                wav.putInt(16)
+                wav.putShort(1)
+                wav.putShort(1)
+                wav.putInt(sampleRate)
+                wav.putInt(sampleRate * 2)
+                wav.putShort(2)
+                wav.putShort(16)
+                wav.put("data".toByteArray(Charsets.US_ASCII))
+                wav.putInt(pcmBytes)
+                for (i in 0 until sampleCount) {
+                    val t = i.toDouble() / sampleRate
+                    val envelope = kotlin.math.exp(-t * 95.0)
+                    val frequency = 2300.0 - 900.0 * (i.toDouble() / sampleCount)
+                    val fundamental = sin(2.0 * PI * frequency * t)
+                    val overtone = sin(2.0 * PI * frequency * 1.73 * t) * 0.22
+                    val sample = ((fundamental + overtone) * envelope * 0.42 * Short.MAX_VALUE)
+                        .toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                    wav.putShort(sample.toShort())
+                }
+                FileOutputStream(file).use { it.write(wav.array()) }
+            }
+        }
+        soundId = runCatching { soundPool.load(file.absolutePath, 1) }.getOrDefault(0)
+        onDispose { soundPool.release() }
+    }
+    return remember(soundPool, soundId, soundReady) {
+        { if (soundReady && soundId != 0) soundPool.play(soundId, 0.7f, 0.7f, 1, 0, 1f) }
+    }
+}
+
+@Composable
 private fun RotaryControlDial(
     open: Boolean,
     onToggle: () -> Unit,
@@ -1842,6 +1910,7 @@ private fun RotaryControlDial(
     val rotation = rotationAnim.value
     val dialScope = rememberCoroutineScope()
     val dialView = LocalView.current
+    val tickSound = rememberRotaryTickSound(dialView.context)
     val haptic = LocalHapticFeedback.current
     var lastTick by remember { mutableIntStateOf(0) }
     val unfold by animateFloatAsState(
@@ -1921,7 +1990,7 @@ private fun RotaryControlDial(
                                     val tick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
                                     if (tick != lastTick) {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        dialView.playSoundEffect(SoundEffectConstants.CLICK)
+                                        tickSound()
                                         lastTick = tick
                                     }
                                 }
@@ -2005,7 +2074,7 @@ private fun RotaryControlDial(
         Surface(
             onClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                dialView.playSoundEffect(SoundEffectConstants.CLICK)
+                tickSound()
                 onToggle()
             },
             shape = CircleShape,
