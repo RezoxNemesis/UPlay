@@ -320,9 +320,10 @@ private fun UPlayHome(
     val uiScope = rememberCoroutineScope()
     val lastProgressUpdateAt = remember { AtomicLong(0L) }
     var instagramLoginOpen by remember { mutableStateOf(false) }
-    var instagramWebStatus by remember { mutableStateOf("Loading Instagram sign-in…") }
+    var instagramWebStatus by remember { mutableStateOf("Loading sign-in page…") }
+    var siteSessionHost by remember { mutableStateOf("www.instagram.com") }
+    var siteSessionReady by remember { mutableStateOf(downloadEngine.hasInstagramSession()) }
     var webPlaybackUrl by remember { mutableStateOf<String?>(null) }
-    var instagramSessionReady by remember { mutableStateOf(downloadEngine.hasInstagramSession()) }
     LaunchedEffect(url) {
         val candidate = extractFirstHttpUrl(url)
         if (candidate == null) {
@@ -357,7 +358,7 @@ private fun UPlayHome(
             ) {
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
                     Text(
-                        "Connect Instagram",
+                        "Connect ${siteSessionHost.removePrefix("www.")}",
                         color = if (darkTheme) Color.White else Color(0xFF101725),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
@@ -393,7 +394,7 @@ private fun UPlayHome(
                                 webChromeClient = WebChromeClient()
                                 webViewClient = object : WebViewClient() {
                                     override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
-                                        instagramWebStatus = "Loading Instagram sign-in…"
+                                        instagramWebStatus = "Loading ${siteSessionHost.removePrefix("www.")} sign-in…"
                                     }
                                     override fun onPageFinished(view: WebView?, pageUrl: String?) {
                                         CookieManager.getInstance().flush()
@@ -402,9 +403,9 @@ private fun UPlayHome(
                                         ) { rawLength ->
                                             val hasPageText = rawLength.orEmpty().trim('"').toIntOrNull()?.let { it > 0 } == true
                                             instagramWebStatus = when {
-                                                !hasPageText -> "Instagram returned a blank sign-in page. Try Open browser; its login cookies may not transfer into this window."
+                                                !hasPageText -> "${siteSessionHost.removePrefix("www.")} returned a blank page. Try Open browser, or reload this page."
                                                 pageUrl.orEmpty().contains("/accounts/login") -> "Sign in above, then tap Use session."
-                                                else -> "Instagram page loaded. Finish sign-in, then tap Use session."
+                                                else -> "Page loaded. Sign in if needed, then tap Use session."
                                             }
                                         }
                                     }
@@ -413,7 +414,7 @@ private fun UPlayHome(
                                         error: android.webkit.WebResourceError?
                                     ) {
                                         if (request?.isForMainFrame == true) {
-                                            instagramWebStatus = "Instagram couldn't load in this window. Check your connection or open Instagram in your browser."
+                                            instagramWebStatus = "This site couldn't load in the embedded window. Check your connection or open it in your browser."
                                         }
                                     }
                                     override fun onReceivedHttpError(
@@ -422,11 +423,12 @@ private fun UPlayHome(
                                         errorResponse: android.webkit.WebResourceResponse?
                                     ) {
                                         if (request?.isForMainFrame == true && (errorResponse?.statusCode ?: 200) >= 400) {
-                                            instagramWebStatus = "Instagram sign-in returned HTTP ${errorResponse?.statusCode}. Try again later or open Instagram in your browser."
+                                            instagramWebStatus = "The site returned HTTP ${errorResponse?.statusCode}. Try again later or open it in your browser."
                                         }
                                     }
                                 }
-                                loadUrl("https://www.instagram.com/accounts/login/")
+                                val isInstagram = siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")
+                                loadUrl(if (isInstagram) "https://www.instagram.com/accounts/login/" else "https://$siteSessionHost/")
                             }
                         },
                         modifier = Modifier.fillMaxWidth().height(390.dp)
@@ -442,18 +444,21 @@ private fun UPlayHome(
                     ) {
                         TextButton(onClick = {
                             runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.instagram.com/accounts/login/")))
+                                val isInstagram = siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")
+                                val target = if (isInstagram) "https://www.instagram.com/accounts/login/" else "https://$siteSessionHost/"
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
                             }
                         }) { Text("Open browser") }
                         TextButton(onClick = { instagramLoginOpen = false }) { Text("Cancel") }
-                        if (instagramSessionReady) {
+                        if (siteSessionReady) {
                             TextButton(onClick = {
-                                downloadEngine.clearInstagramSession()
-                                CookieManager.getInstance().removeAllCookies(null)
-                                CookieManager.getInstance().flush()
-                                instagramSessionReady = false
+                                downloadEngine.clearSiteSession(siteSessionHost)
+                                if (siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")) {
+                                    downloadEngine.clearInstagramSession()
+                                }
+                                siteSessionReady = false
                                 instagramLoginOpen = false
-                                message = "Instagram session removed from UPlay."
+                                message = "Saved session for ${siteSessionHost.removePrefix("www.")} removed from UPlay."
                             }) { Text("Disconnect") }
                         }
                     }
@@ -461,17 +466,22 @@ private fun UPlayHome(
                         onClick = {
                             CookieManager.getInstance().flush()
                             val cookieManager = CookieManager.getInstance()
-                            val cookies = listOf(
-                                cookieManager.getCookie("https://www.instagram.com"),
-                                cookieManager.getCookie("https://m.instagram.com"),
-                                cookieManager.getCookie("https://instagram.com")
-                            ).filterNot { it.isNullOrBlank() }.joinToString("; ")
-                            if (downloadEngine.saveInstagramCookies(cookies)) {
-                                instagramSessionReady = true
+                            val isInstagram = siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")
+                            val cookies = if (isInstagram) {
+                                listOf(
+                                    cookieManager.getCookie("https://www.instagram.com"),
+                                    cookieManager.getCookie("https://m.instagram.com"),
+                                    cookieManager.getCookie("https://instagram.com")
+                                ).filterNot { it.isNullOrBlank() }.joinToString("; ")
+                            } else cookieManager.getCookie("https://$siteSessionHost").orEmpty()
+                            val saved = downloadEngine.saveSiteCookies(siteSessionHost, cookies) &&
+                                (!isInstagram || downloadEngine.saveInstagramCookies(cookies))
+                            if (saved) {
+                                siteSessionReady = true
                                 instagramLoginOpen = false
-                                message = "Instagram session saved locally. Retry the public or account-authorized Reel link."
+                                message = "Session for ${siteSessionHost.removePrefix("www.")} saved privately on this device. Retry the link."
                             } else {
-                                message = "No Instagram session was found in UPlay's login window. Browser sign-in does not automatically transfer cookies into this window."
+                                message = "No usable site cookies were found. Sign in inside this window first; external-browser cookies are not automatically shared."
                             }
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -1453,7 +1463,16 @@ private fun UPlayHome(
                             horizontalArrangement = Arrangement.End
                         ) {
                             OutlinedButton(
-                                onClick = { instagramLoginOpen = true },
+                                onClick = {
+                                    val candidate = extractFirstHttpUrl(url)
+                                    val host = runCatching { Uri.parse(candidate ?: "").host.orEmpty().lowercase() }
+                                        .getOrDefault("")
+                                    siteSessionHost = host.takeIf { it.isNotBlank() } ?: "www.instagram.com"
+                                    siteSessionReady = downloadEngine.hasSiteSession(siteSessionHost) ||
+                                        ((siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")) &&
+                                            downloadEngine.hasInstagramSession())
+                                    instagramLoginOpen = true
+                                },
                                 enabled = !downloadBusy,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(
@@ -1461,12 +1480,12 @@ private fun UPlayHome(
                                 )
                             ) {
                                 Icon(
-                                    if (instagramSessionReady) Icons.Default.LockOpen else Icons.Default.Lock,
+                                    if (siteSessionReady) Icons.Default.LockOpen else Icons.Default.Lock,
                                     contentDescription = null,
                                     modifier = Modifier.size(17.dp)
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                Text(if (instagramSessionReady) "Instagram session · Manage" else "Sign in to Instagram")
+                                Text(if (siteSessionReady) "${siteSessionHost.removePrefix("www.")} session · Manage" else "Sign in to ${siteSessionHost.removePrefix("www.")}")
                             }
                         }
                         if (downloadBusy || downloadPreviewTitle != null) {
