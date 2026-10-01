@@ -47,6 +47,7 @@ class UniversalDownloadEngine(context: Context) {
 
     suspend fun download(
         rawUrl: String,
+        quality: String = "best",
         onProgress: (Float, String) -> Unit
     ): Uri = withContext(Dispatchers.IO) {
         val url = rawUrl.trim()
@@ -62,11 +63,20 @@ class UniversalDownloadEngine(context: Context) {
         val prefix = "uplay_${startedAt}_"
         val host = parsed.host.orEmpty().lowercase()
         val isInstagramSource = host == "instagram.com" || host.endsWith(".instagram.com")
+        val maxHeight = when (quality.lowercase().replace("p", "").replace(" ", "")) {
+            "1080" -> 1080
+            "720" -> 720
+            "480" -> 480
+            "360" -> 360
+            else -> null
+        }
+        val videoFormat = maxHeight?.let { "bestvideo[height<=$it]" } ?: "bestvideo"
+        val singleFormat = maxHeight?.let { "best[height<=$it]" } ?: "best"
         var extractionFailure: Exception? = null
 
         val mergedUri = try {
             onProgress(0f, "Finding separate video and audio streams…")
-            val videoFile = downloadFormat(url, startedAt, "video", "bestvideo", 0f, 0.48f, onProgress)
+            val videoFile = downloadFormat(url, startedAt, "video", videoFormat, 0f, 0.48f, onProgress)
             val audioFile = downloadFormat(url, startedAt, "audio", "bestaudio", 0.48f, 0.48f, onProgress)
             val mp4CompatibleVideo = videoFile.extension.lowercase() in setOf("mp4", "m4v", "mov")
             val mp4CompatibleAudio = audioFile.extension.lowercase() in setOf("m4a", "mp4", "aac")
@@ -96,7 +106,7 @@ class UniversalDownloadEngine(context: Context) {
             workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
             val mobileUri = try {
                 val mobileFile = downloadFormat(
-                    url, startedAt, "instagram_mobile", "best", 0f, 0.95f, onProgress,
+                    url, startedAt, "instagram_mobile", singleFormat, 0f, 0.95f, onProgress,
                     userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
                 )
                 publishToDownloads(mobileFile)
@@ -112,7 +122,7 @@ class UniversalDownloadEngine(context: Context) {
         // A single-file format is a compatibility fallback for sources without separable tracks.
         workDir.listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach { runCatching { it.delete() } }
         val singleUri = try {
-            val singleFile = downloadFormat(url, startedAt, "single", "best", 0f, 0.95f, onProgress)
+            val singleFile = downloadFormat(url, startedAt, "single", singleFormat, 0f, 0.95f, onProgress)
             publishToDownloads(singleFile)
         } catch (cancelled: CancellationException) {
             throw cancelled
