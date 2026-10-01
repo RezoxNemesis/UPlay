@@ -70,9 +70,9 @@ class UniversalDownloadEngine(context: Context) {
             val mp4CompatibleAudio = audioFile.extension.lowercase() in setOf("m4a", "mp4", "aac")
             val container = if (mp4CompatibleVideo && mp4CompatibleAudio) "mp4" else "mkv"
             val merged = File(workDir, "uplay_${startedAt}_merged.$container")
-            val command = "-y -i \\"${videoFile.absolutePath}\\" -i \\"${audioFile.absolutePath}\\" -c copy" +
+            val command = "-y -i ${videoFile.absolutePath} -i ${audioFile.absolutePath} -c copy" +
                 (if (container == "mp4") " -movflags +faststart" else "") +
-                " \\"${merged.absolutePath}\\""
+                " ${merged.absolutePath}"
             val session = FFmpegKit.execute(command)
             if (!ReturnCode.isSuccess(session.returnCode) || !merged.exists() || merged.length() == 0L) {
                 throw IllegalStateException("The selected video and audio streams couldn't be combined.")
