@@ -120,9 +120,32 @@ class UniversalDownloadEngine(context: Context) {
     }
 
     fun hasInstagramSession(): Boolean =
-        instagramCookiesFile.isFile && runCatching {
-            instagramCookiesFile.readText().contains("\tsessionid\t")
-        }.getOrDefault(false)
+        isValidNetscapeCookieFile(instagramCookiesFile) &&
+            runCatching { instagramCookiesFile.readLines().any { it.split('\t').let { fields -> fields.size >= 7 && fields[5] == "sessionid" && fields[6].isNotBlank() } } }
+                .getOrDefault(false)
+
+    /**
+     * Validate cookie jars before passing them to yt-dlp. A malformed jar must never
+     * make an otherwise public video fail before extraction even starts.
+     */
+    private fun isValidNetscapeCookieFile(file: File): Boolean = runCatching {
+        if (!file.isFile || file.length() < 40L) return@runCatching false
+        val lines = file.readLines()
+        if (lines.none { it.trim() == "# Netscape HTTP Cookie File" }) return@runCatching false
+        val cookies = lines.filter { it.isNotBlank() && !it.startsWith("#") }
+        cookies.isNotEmpty() && cookies.all { line ->
+            val fields = line.split('\t')
+            fields.size == 7 &&
+                fields[0].isNotBlank() &&
+                fields[1] in setOf("TRUE", "FALSE") &&
+                fields[2].startsWith("/") &&
+                fields[3] in setOf("TRUE", "FALSE") &&
+                fields[4].toLongOrNull() != null &&
+                fields[5].isNotBlank() &&
+                fields[6].isNotBlank() &&
+                fields.none { it.contains('\n') || it.contains('\r') }
+        }
+    }.getOrDefault(false)
 
     private fun cookieScopeForHost(hostValue: String): String {
         val host = hostValue.trim().lowercase().removePrefix(".")
@@ -148,31 +171,49 @@ class UniversalDownloadEngine(context: Context) {
     /** Save only cookies the user explicitly approves, scoped to the current website. */
     fun saveSiteCookies(hostValue: String, cookieHeader: String): Boolean = runCatching {
         val scope = cookieScopeForHost(hostValue)
-        val pairs = cookieHeader.split(';').mapNotNull { item ->
+        val pairs = parseCookieHeader(cookieHeader)
+        if (pairs.isEmpty()) return@runCatching false
+        writeNetscapeCookieFile(siteCookiesFile(hostValue), scope, pairs)
+    }.getOrDefault(false)
+
+    private fun parseCookieHeader(cookieHeader: String): List<Pair<String, String>> =
+        cookieHeader.split(';').mapNotNull { item ->
             val separator = item.indexOf('=')
             if (separator <= 0) null else {
                 val name = item.substring(0, separator).trim()
                 val value = item.substring(separator + 1).trim()
-                if (name.isBlank() || value.isBlank() || name.contains('\t') ||
-                    value.contains('\t') || value.contains('\n') || value.contains('\r')) null
-                else name to value
+                val safeName = name.isNotBlank() && name.none { it.isWhitespace() || it == '=' || it == ';' }
+                val safeValue = value.isNotBlank() && value.none { it == '\t' || it == '\n' || it == '\r' }
+                if (safeName && safeValue) name to value else null
             }
         }.distinctBy { it.first }
-        if (pairs.isEmpty()) return@runCatching false
+
+    /**
+     * CookieManager only exposes a Cookie request header, not cookie expiry metadata.
+     * Use a positive, parseable expiry for those session cookies because some bundled
+     * yt-dlp cookie-jar parsers reject Netscape session-cookie expiry=0. The server's
+     * session token still expires/revokes normally; the jar remains app-private.
+     */
+    private fun writeNetscapeCookieFile(
+        file: File,
+        scope: String,
+        pairs: List<Pair<String, String>>
+    ): Boolean {
+        if (pairs.isEmpty()) return false
         val domain = scope.removePrefix(".")
         val includeSubdomains = scope.startsWith(".")
         val contents = buildString {
             append("# Netscape HTTP Cookie File\n")
+            append("# Generated locally by UPlay; do not share this file.\n")
             pairs.forEach { (name, value) ->
-                append(domain).append('\t')
-                    .append(if (includeSubdomains) "TRUE" else "FALSE")
-                    .append("\t/\tTRUE\t0\t")
+                append(if (includeSubdomains) ".$domain" else domain).append('\t')
+                    .append(if (includeSubdomains) "TRUE" else "FALSE").append("\t/\tTRUE\t2147483647\t")
                     .append(name).append('\t').append(value).append('\n')
             }
         }
-        siteCookiesFile(hostValue).writeText(contents)
-        true
-    }.getOrDefault(false)
+        file.writeText(contents, Charsets.UTF_8)
+        return isValidNetscapeCookieFile(file)
+    }
 
     fun clearSiteSession(hostValue: String) {
         runCatching { siteCookiesFile(hostValue).delete() }
@@ -183,30 +224,14 @@ class UniversalDownloadEngine(context: Context) {
      * The cookie jar stays in this app's private storage and is only passed to Instagram
      * extraction requests; it is never uploaded by UPlay.
      */
-    fun saveInstagramCookies(cookieHeader: String): Boolean {
-        val pairs = cookieHeader.split(';').mapNotNull { item ->
-            val separator = item.indexOf('=')
-            if (separator <= 0) null else {
-                val name = item.substring(0, separator).trim()
-                val value = item.substring(separator + 1).trim()
-                if (name.isBlank() || value.contains('\n') || value.contains('\r') ||
-                    name.contains('\t') || value.contains('\t')) null else name to value
-            }
-        }.distinctBy { it.first }
-        if (pairs.none { it.first == "sessionid" && it.second.isNotBlank() }) return false
-        val contents = buildString {
-            append("# Netscape HTTP Cookie File\n")
-            pairs.forEach { (name, value) ->
-                append(".instagram.com\tTRUE\t/\tTRUE\t0\t")
-                append(name).append('\t').append(value).append('\n')
-            }
-        }
-        return runCatching {
-            instagramCookiesFile.writeText(contents)
-            saveSiteCookies("www.instagram.com", cookieHeader)
-            true
-        }.getOrDefault(false)
-    }
+    fun saveInstagramCookies(cookieHeader: String): Boolean = runCatching {
+        val pairs = parseCookieHeader(cookieHeader)
+        if (pairs.none { it.first == "sessionid" && it.second.isNotBlank() }) return@runCatching false
+        writeNetscapeCookieFile(instagramCookiesFile, ".instagram.com", pairs)
+        // Keep the host-scoped jar in sync so the extractor uses the same validated format.
+        saveSiteCookies("www.instagram.com", cookieHeader)
+        isValidNetscapeCookieFile(instagramCookiesFile)
+    }.getOrDefault(false)
 
     fun clearInstagramSession() {
         runCatching { instagramCookiesFile.delete() }
@@ -492,12 +517,11 @@ class UniversalDownloadEngine(context: Context) {
             // Use only the cookie jar explicitly approved for this source host. Cookie jars
             // are host-scoped so a login to one website is never sent to another website.
             val sourceCookies = runCatching { siteCookiesFile(sourceHost) }.getOrNull()
-                ?.takeIf { it.isFile && it.length() > 40L }
-            if (sourceCookies != null) {
-                addOption("--cookies", sourceCookies.absolutePath)
-            } else if (instagramSource && hasInstagramSession()) {
-                addOption("--cookies", instagramCookiesFile.absolutePath)
+                ?.takeIf { isValidNetscapeCookieFile(it) }
+            val approvedCookies = sourceCookies ?: instagramCookiesFile.takeIf {
+                instagramSource && hasInstagramSession() && isValidNetscapeCookieFile(it)
             }
+            if (approvedCookies != null) addOption("--cookies", approvedCookies.absolutePath)
             addOption("-f", format)
         }
         val progressSample = longArrayOf(0L, System.currentTimeMillis())
