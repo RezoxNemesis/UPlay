@@ -116,6 +116,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -257,8 +258,19 @@ private fun UPlayHome(
     val deviceVideos = remember { mutableStateListOf<RecentVideo>() }
     val deviceAudios = remember { mutableStateListOf<RecentVideo>() }
     var mediaPermissionGranted by remember { mutableStateOf(false) }
-    val mediaPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        mediaPermissionGranted = results.values.any { it }
+    var mediaScanInProgress by remember { mutableStateOf(false) }
+    var mediaScanMessage by remember { mutableStateOf<String?>(null) }
+    var mediaScanRequest by remember { mutableIntStateOf(0) }
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val videoGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+        val audioGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val selectedVideosGranted = Build.VERSION.SDK_INT >= 34 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
+        mediaPermissionGranted = if (Build.VERSION.SDK_INT >= 33) {
+            videoGranted || audioGranted || selectedVideosGranted
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
     }
     LaunchedEffect(Unit) {
         val requiredPermissions = when {
@@ -273,34 +285,59 @@ private fun UPlayHome(
             )
             else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        mediaPermissionGranted = when {
-            Build.VERSION.SDK_INT >= 33 -> {
-                val videoGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
-                val audioGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
-                val selectedGranted = Build.VERSION.SDK_INT >= 34 &&
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
-                (videoGranted && audioGranted) || selectedGranted
-            }
-            else -> ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        val videoGranted = Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+        val audioGranted = Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val selectedVideosGranted = Build.VERSION.SDK_INT >= 34 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
+        mediaPermissionGranted = if (Build.VERSION.SDK_INT >= 33) {
+            videoGranted || audioGranted || selectedVideosGranted
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
         if (!mediaPermissionGranted) mediaPermissionLauncher.launch(requiredPermissions)
     }
 
-    LaunchedEffect(mediaPermissionGranted) {
-        if (mediaPermissionGranted) {
-            val scanned = withContext(Dispatchers.IO) { scanDeviceMedia(context) }
+    LaunchedEffect(mediaPermissionGranted, mediaScanRequest) {
+        if (!mediaPermissionGranted) {
+            deviceVideos.clear()
+            deviceAudios.clear()
+            mediaScanMessage = "Allow media access to browse files on this device."
+            return@LaunchedEffect
+        }
+        val canReadVideos = Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED ||
+            (Build.VERSION.SDK_INT >= 34 && ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED)
+        val canReadAudio = Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+        mediaScanInProgress = true
+        mediaScanMessage = null
+        try {
+            val scanned = withContext(Dispatchers.IO) {
+                scanDeviceMedia(context, includeVideos = canReadVideos, includeAudio = canReadAudio)
+            }
+            val videoHistory = recentVideos.associateBy { it.uri }
+            val audioHistory = recentAudios.associateBy { it.uri }
             deviceVideos.clear()
             deviceVideos.addAll(scanned.first.map { media ->
-                recentVideos.firstOrNull { it.uri == media.uri }?.let {
+                videoHistory[media.uri]?.let {
                     media.copy(positionMs = it.positionMs, durationMs = media.durationMs.takeIf { d -> d > 0L } ?: it.durationMs)
                 } ?: media
             })
             deviceAudios.clear()
             deviceAudios.addAll(scanned.second.map { media ->
-                recentAudios.firstOrNull { it.uri == media.uri }?.let {
+                audioHistory[media.uri]?.let {
                     media.copy(positionMs = it.positionMs, durationMs = media.durationMs.takeIf { d -> d > 0L } ?: it.durationMs)
                 } ?: media
             })
+            mediaScanMessage = if (canReadVideos && canReadAudio) null else "Some media access is limited by your current permissions."
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            mediaScanMessage = "Couldn't finish scanning media. Check permissions and try again."
+        } finally {
+            mediaScanInProgress = false
         }
     }
 
@@ -932,8 +969,26 @@ private fun UPlayHome(
                     listOf(LibraryRow(group)) + entries.map { LibraryRow(group, it) }
                 }
                 Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 18.dp, vertical = 14.dp)) {
-                    Text("Your library", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = foreground)
-                    Text("History, progress and file details in one place.", color = secondaryText, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Your library", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = foreground)
+                            Text("History, progress and file details in one place.", color = secondaryText, fontSize = 13.sp)
+                        }
+                        TextButton(onClick = { mediaScanRequest++ }, enabled = !mediaScanInProgress) {
+                            Text(if (mediaScanInProgress) "Scanning…" else "Refresh", color = Color(0xFF45B8FF))
+                        }
+                    }
+                    if (mediaScanInProgress) {
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)),
+                            color = Color(0xFF8DD8FF),
+                            trackColor = if (dark) Color(0xFF233448) else Color(0xFFD8E8F5)
+                        )
+                    }
+                    mediaScanMessage?.let { scanMessage ->
+                        Text(scanMessage, color = secondaryText, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
+                    }
                     Spacer(Modifier.height(16.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
@@ -961,7 +1016,15 @@ private fun UPlayHome(
                         }
                     }
                     Spacer(Modifier.height(12.dp))
-                    if (mediaItems.isEmpty()) {
+                    if (mediaItems.isEmpty() && mediaScanInProgress) {
+                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                CircularProgressIndicator(color = Color(0xFF61BFFF), strokeWidth = 3.dp)
+                                Text("Finding your media…", color = foreground, fontWeight = FontWeight.SemiBold)
+                                Text("Your library will appear as soon as scanning finishes.", color = secondaryText, fontSize = 13.sp)
+                            }
+                        }
+                    } else if (mediaItems.isEmpty()) {
                         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Icon(if (libraryMode == 0) Icons.Default.VideoLibrary else Icons.Default.GraphicEq,
@@ -1787,7 +1850,11 @@ private fun saveRecentVideos(context: Context, videos: List<RecentVideo>, key: S
     }
 }
 
-private fun scanDeviceMedia(context: Context): Pair<List<RecentVideo>, List<RecentVideo>> {
+private fun scanDeviceMedia(
+    context: Context,
+    includeVideos: Boolean = true,
+    includeAudio: Boolean = true
+): Pair<List<RecentVideo>, List<RecentVideo>> {
     val videos = mutableListOf<RecentVideo>()
     val audios = mutableListOf<RecentVideo>()
     val volumes = if (Build.VERSION.SDK_INT >= 29) {
@@ -1798,8 +1865,8 @@ private fun scanDeviceMedia(context: Context): Pair<List<RecentVideo>, List<Rece
             else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         val audioCollection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Audio.Media.getContentUri(volume)
             else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        queryMediaCollection(context, videoCollection, false, videos)
-        queryMediaCollection(context, audioCollection, true, audios)
+        if (includeVideos) queryMediaCollection(context, videoCollection, false, videos)
+        if (includeAudio) queryMediaCollection(context, audioCollection, true, audios)
     }
     return videos.distinctBy { it.uri } to audios.distinctBy { it.uri }
 }
@@ -1819,9 +1886,7 @@ private fun queryMediaCollection(context: Context, collection: Uri, isAudio: Boo
             val sizeIndex = cursor.getColumnIndex(sizeColumn)
             val durationIndex = cursor.getColumnIndex(durationColumn)
             val pathIndex = if (Build.VERSION.SDK_INT >= 29) cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH) else -1
-            var scannedCount = 0
-            while (scannedCount < 160 && cursor.moveToNext()) {
-                scannedCount += 1
+            while (cursor.moveToNext()) {
                 val id = cursor.getLong(idIndex)
                 val title = cursor.getString(nameIndex)?.takeIf { it.isNotBlank() } ?: if (isAudio) "Audio" else "Video"
                 val path = if (pathIndex >= 0) cursor.getString(pathIndex).orEmpty().trim('/') else ""
