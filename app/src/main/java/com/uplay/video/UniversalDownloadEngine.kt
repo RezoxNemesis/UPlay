@@ -363,7 +363,7 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--retries", "5")
             addOption("--fragment-retries", "5")
             addOption("--concurrent-fragments", "8")
-            addOption("--buffer-size", "16K")
+            addOption("--buffer-size", "1M")
             addOption("--http-chunk-size", "10M")
             addOption("--file-access-retries", "3")
             addOption("--socket-timeout", "30")
@@ -383,7 +383,7 @@ class UniversalDownloadEngine(context: Context) {
             val combinedProgress = (progressStart + safeProgress * progressScale).coerceIn(0f, 99f)
             val currentBytes = workDir.listFiles()
                 ?.filter { it.isFile && it.name.startsWith(prefix) }
-                ?.maxOfOrNull { it.length() } ?: 0L
+                ?.sumOf { it.length() } ?: 0L
             val now = System.currentTimeMillis()
             var speedBytesPerSecond = 0L
             if (now - progressSample[1] >= 500L) {
