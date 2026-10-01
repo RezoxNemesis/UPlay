@@ -84,6 +84,9 @@ import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.FirstPage
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayCircleFilled
