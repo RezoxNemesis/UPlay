@@ -213,7 +213,20 @@ class MainActivity : ComponentActivity() {
                         preferences.edit().putBoolean("dark_theme", enabled).apply()
                     },
                     onLocalVideo = { uri -> play(MediaItem.fromUri(uri)) },
-                    onPlayUrl = { url -> play(MediaItem.fromUri(url)) }
+                    onPlayUrl = { url ->
+                        val extension = runCatching {
+                            Uri.parse(url).lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
+                        }.getOrDefault("")
+                        val mimeType = when (extension) {
+                            "m3u8" -> "application/x-mpegURL"
+                            "mpd" -> "application/dash+xml"
+                            else -> null
+                        }
+                        val item = MediaItem.Builder().setUri(url).apply {
+                            if (mimeType != null) setMimeType(mimeType)
+                        }.build()
+                        play(item)
+                    }
                 )
             }
         }
@@ -2305,19 +2318,34 @@ private fun scanDeviceMedia(
             else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         val audioCollection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Audio.Media.getContentUri(volume)
             else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        if (includeVideos) queryMediaCollection(context, videoCollection, false, videos)
+        if (includeVideos) {
+            queryMediaCollection(context, videoCollection, false, videos)
+            if (Build.VERSION.SDK_INT >= 29) {
+                // UPlay downloads use MediaStore.Downloads so they can be saved to Download/UPlay.
+                // Include video files from that collection in the in-app library as well.
+                val downloadsCollection = MediaStore.Downloads.getContentUri(volume)
+                queryMediaCollection(context, downloadsCollection, false, videos, includeDuration = false)
+            }
+        }
         if (includeAudio) queryMediaCollection(context, audioCollection, true, audios)
     }
     return videos.distinctBy { it.uri } to audios.distinctBy { it.uri }
 }
 
-private fun queryMediaCollection(context: Context, collection: Uri, isAudio: Boolean, destination: MutableList<RecentVideo>) {
+private fun queryMediaCollection(
+    context: Context,
+    collection: Uri,
+    isAudio: Boolean,
+    destination: MutableList<RecentVideo>,
+    includeDuration: Boolean = true
+) {
     val idColumn = MediaStore.MediaColumns._ID
     val nameColumn = MediaStore.MediaColumns.DISPLAY_NAME
     val sizeColumn = MediaStore.MediaColumns.SIZE
     val dateColumn = MediaStore.MediaColumns.DATE_ADDED
     val durationColumn = MediaStore.MediaColumns.DURATION
-    val columns = mutableListOf(idColumn, nameColumn, sizeColumn, dateColumn, durationColumn)
+    val columns = mutableListOf(idColumn, nameColumn, sizeColumn, dateColumn)
+    if (includeDuration) columns += durationColumn
     if (Build.VERSION.SDK_INT >= 29) columns += MediaStore.MediaColumns.RELATIVE_PATH
     runCatching {
         context.contentResolver.query(collection, columns.toTypedArray(), null, null, "$dateColumn DESC")?.use { cursor ->
