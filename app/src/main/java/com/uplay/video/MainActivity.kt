@@ -105,6 +105,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import android.view.SoundEffectConstants
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -555,7 +559,7 @@ private fun UPlayHome(
     Surface(modifier = Modifier.fillMaxSize(), color = appBackground) {
         Scaffold(containerColor = appBackground, contentWindowInsets = if (immersivePlayer) WindowInsets(0,0,0,0) else WindowInsets.safeDrawing, bottomBar = {
             if (!fullScreen && !(landscape && selected)) {
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(82.dp)) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(78.dp).padding(vertical = 3.dp)) {
                     val density = androidx.compose.ui.platform.LocalDensity.current
                     val markerX = remember(maxWidth, density) {
                         Animatable(with(density) { (maxWidth / 6f - 10.dp).toPx() })
@@ -575,19 +579,24 @@ private fun UPlayHome(
                             filmRollVisible = false
                         }
                     }
+                    val homeIconScale by animateFloatAsState(if (currentTab == 0) 1.10f else 0.94f, tween(220, easing = FastOutSlowInEasing), label = "home-tab-scale")
+                    val playerIconScale by animateFloatAsState(if (currentTab == 1) 1.12f else 0.94f, tween(220, easing = FastOutSlowInEasing), label = "player-tab-scale")
+                    val libraryIconScale by animateFloatAsState(if (currentTab == 2) 1.10f else 0.94f, tween(220, easing = FastOutSlowInEasing), label = "library-tab-scale")
                     NavigationBar(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().padding(vertical = 2.dp)
+                            .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                            .border(1.dp, if (systemDark) Color(0xFF1D3045) else Color(0xFFDDE8F3), RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)),
                         containerColor = if (systemDark) Color(0xFF0B101B) else Color.White,
                         tonalElevation = 0.dp
                     ) {
                         NavigationBarItem(currentTab == 0, { selectTab(0) }, {
-                            Icon(Icons.Default.Home, null, modifier = Modifier.size(25.dp))
+                            Icon(Icons.Default.Home, null, tint = if (currentTab == 0) Color(0xFF62C9FF) else if (systemDark) Color(0xFF8797AB) else Color(0xFF77859A), modifier = Modifier.size(25.dp).graphicsLayer { scaleX = homeIconScale; scaleY = homeIconScale })
                         }, label = { Text("Home") })
                         NavigationBarItem(currentTab == 1, { selectTab(1) }, {
-                            Icon(Icons.Default.PlayCircleFilled, null, modifier = Modifier.size(27.dp))
+                            Icon(Icons.Default.PlayCircleFilled, null, tint = if (currentTab == 1) Color(0xFF62C9FF) else if (systemDark) Color(0xFF8797AB) else Color(0xFF77859A), modifier = Modifier.size(27.dp).graphicsLayer { scaleX = playerIconScale; scaleY = playerIconScale })
                         }, label = { Text("Player") })
                         NavigationBarItem(currentTab == 2, { selectTab(2) }, {
-                            Icon(Icons.Default.VideoLibrary, null, modifier = Modifier.size(25.dp))
+                            Icon(Icons.Default.VideoLibrary, null, tint = if (currentTab == 2) Color(0xFF62C9FF) else if (systemDark) Color(0xFF8797AB) else Color(0xFF77859A), modifier = Modifier.size(25.dp).graphicsLayer { scaleX = libraryIconScale; scaleY = libraryIconScale })
                         }, label = { Text("Library") })
                     }
                     if (filmRollVisible) {
@@ -733,11 +742,11 @@ private fun UPlayHome(
                                             ) {
                                                 IconButton(
                                                     onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)); controlsVisible = true },
-                                                    modifier = Modifier.size(46.dp).background(Color(0x77070D18), CircleShape)
+                                                    modifier = Modifier.size(42.dp).background(Color(0x77070D18), CircleShape)
                                                 ) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(28.dp)) }
                                                 IconButton(
                                                     onClick = { if (player.isPlaying) player.pause() else player.play(); controlsVisible = true },
-                                                    modifier = Modifier.size(72.dp).background(Brush.linearGradient(listOf(Color(0xFFB3F0FF), Color(0xFF62BFFF))), CircleShape)
+                                                    modifier = Modifier.size(64.dp).background(Brush.linearGradient(listOf(Color(0xFFB3F0FF), Color(0xFF62BFFF))), CircleShape)
                                                         .border(1.dp, Color(0xAAE0FAFF), CircleShape)
                                                 ) {
                                                     Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -745,14 +754,14 @@ private fun UPlayHome(
                                                 }
                                                 IconButton(
                                                     onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtLeast(0L)); controlsVisible = true },
-                                                    modifier = Modifier.size(46.dp).background(Color(0x77070D18), CircleShape)
+                                                    modifier = Modifier.size(42.dp).background(Color(0x77070D18), CircleShape)
                                                 ) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(28.dp)) }
                                             }
                                         }
                                         RotaryControlDial(
                                             open = radialOpen,
                                             onToggle = { radialOpen = !radialOpen },
-                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp).size(226.dp),
+                                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).size(210.dp),
                                             onAction = { action ->
                                                 radialOpen = false
                                                 controlsVisible = true
@@ -795,12 +804,12 @@ private fun UPlayHome(
                                         )
                                         Column(
                                             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                                                .padding(horizontal = 10.dp, vertical = 10.dp)
+                                                .padding(horizontal = 14.dp, vertical = 12.dp)
                                                 .clip(RoundedCornerShape(18.dp))
                                                 .background(Color(0xB807111E))
                                                 .border(1.dp, Color(0x332F80A9), RoundedCornerShape(18.dp))
-                                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             val duration = (player.duration).takeIf { it > 0L } ?: 0L
                                             val position = player.currentPosition.coerceIn(0L, duration.coerceAtLeast(1L))
@@ -809,7 +818,7 @@ private fun UPlayHome(
                                                 durationMs = duration,
                                                 isPlaying = isPlaying,
                                                 onSeek = { target -> if (duration > 0L) player.seekTo(target.coerceIn(0L, duration)) },
-                                                modifier = Modifier.fillMaxWidth().height(30.dp)
+                                                modifier = Modifier.fillMaxWidth().height(26.dp)
                                             )
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
@@ -863,7 +872,11 @@ private fun UPlayHome(
                                     val validUrl = parsed != null &&
                                         (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                         !parsed.host.isNullOrBlank()
-                                    if (validUrl) {
+                                    if (validUrl && isInstagramPostUrl(candidate)) {
+                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
+                                            .onSuccess { message = "Opened Instagram. A post link is not a direct video file; UPlay can play supported direct media URLs you have permission to use." }
+                                            .onFailure { message = "Couldn’t open Instagram. Try opening the post in your browser." }
+                                    } else if (validUrl) {
                                         onPlayUrl(candidate)
                                         selected = true
                                         isMusicMode = false
@@ -883,12 +896,12 @@ private fun UPlayHome(
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(5.dp))
-                                Text("Play link", fontWeight = FontWeight.Bold)
+                                Text(if (isInstagramPostUrl(url.trim())) "Open Instagram" else "Play link", fontWeight = FontWeight.Bold)
                             }
                         }
                         OutlinedButton(
                             onClick = { audioPicker.launch(arrayOf("audio/*")) },
-                            modifier = Modifier.fillMaxWidth().height(46.dp),
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
                             shape = RoundedCornerShape(15.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
                         ) {
@@ -899,7 +912,7 @@ private fun UPlayHome(
                         OutlinedTextField(
                             value = url,
                             onValueChange = { url = it },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().align(Alignment.CenterHorizontally),
                             placeholder = { Text("Paste a direct video URL or shared link", color = Muted) },
                             leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = Green) },
                             singleLine = true,
@@ -1101,7 +1114,7 @@ private fun UPlayHome(
                     initialValue = 0f,
                     targetValue = 1f,
                     animationSpec = infiniteRepeatable(
-                        animation = tween(durationMillis = 3600, easing = LinearEasing),
+                        animation = tween(durationMillis = 4200, easing = LinearEasing),
                         repeatMode = RepeatMode.Restart
                     ),
                     label = "link-wave"
@@ -1118,7 +1131,7 @@ private fun UPlayHome(
                             horizontalArrangement = Arrangement.spacedBy(11.dp)
                         ) {
                             Box(
-                                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
+                                modifier = Modifier.size(43.dp).clip(RoundedCornerShape(15.dp))
                                     .background(if (dark) Color(0xFF13243A) else Color(0xFFE6F5FF)),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -1129,7 +1142,7 @@ private fun UPlayHome(
                             }
                             Text(
                                 "UPlay",
-                                fontSize = 43.sp,
+                                fontSize = 38.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontFamily = FontFamily.SansSerif,
                                 letterSpacing = (-1.8).sp,
@@ -1157,9 +1170,9 @@ private fun UPlayHome(
                     Spacer(Modifier.height(12.dp))
                     Text("YOUR PERSONAL MEDIA SPACE", color = if (dark) Color(0xFF8DD8FF) else Color(0xFF267CB7),
                         fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.4.sp)
-                    Spacer(Modifier.height(28.dp))
+                    Spacer(Modifier.height(20.dp))
                     Box(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
+                        modifier = Modifier.widthIn(max = 500.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp))
                             .background(
                                 Brush.horizontalGradient(
                                     colors = listOf(Color(0xFF91DFFF), Color(0xFF5EBEFF), Color(0xFFC0EEFF), Color(0xFF78C9FF)),
@@ -1176,10 +1189,10 @@ private fun UPlayHome(
                                 .background(fieldSurface)
                                 .drawWithContent {
                                     drawContent()
-                                    val waveWidth = size.width * 0.30f
+                                    val waveWidth = size.width * 0.24f
                                     val waveX = wave * (size.width + waveWidth * 2f) - waveWidth
                                     val midY = size.height * 0.5f
-                                    val amplitude = 8.dp.toPx()
+                                    val amplitude = 4.dp.toPx()
                                     val path = Path().apply {
                                         moveTo(waveX, midY - amplitude * 0.35f)
                                         cubicTo(
@@ -1246,7 +1259,7 @@ private fun UPlayHome(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(
                             onClick = { picker.launch(arrayOf("video/*")) },
-                            modifier = Modifier.weight(1f).height(50.dp),
+                            modifier = Modifier.weight(1f).height(46.dp),
                             shape = RoundedCornerShape(16.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Blue)
                         ) {
@@ -1261,7 +1274,11 @@ private fun UPlayHome(
                                 val validUrl = parsed != null &&
                                     (parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
                                     !parsed.host.isNullOrBlank()
-                                if (validUrl) {
+                                if (validUrl && isInstagramPostUrl(candidate)) {
+                                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate))) }
+                                        .onSuccess { message = "Opened Instagram. A post link is not a direct video file; UPlay can play supported direct media URLs you have permission to use." }
+                                        .onFailure { message = "Couldn’t open Instagram. Try opening the post in your browser." }
+                                } else if (validUrl) {
                                     onPlayUrl(candidate)
                                     selected = true
                                     currentTab = 1
@@ -1275,16 +1292,16 @@ private fun UPlayHome(
                                     message = "Loading video link…"
                                 } else message = "Enter a valid HTTP(S) video link first."
                             },
-                            modifier = Modifier.weight(1f).height(50.dp),
+                            modifier = Modifier.weight(1f).height(46.dp),
                             shape = RoundedCornerShape(16.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = if (dark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Play link", fontWeight = FontWeight.SemiBold)
+                            Text(if (isInstagramPostUrl(url.trim())) "Open Instagram" else "Play link", fontWeight = FontWeight.SemiBold)
                         }
                     }
-                    Spacer(Modifier.height(34.dp))
+                    Spacer(Modifier.height(22.dp))
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Recently watched", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = foreground)
@@ -1562,7 +1579,12 @@ private fun RotaryControlDial(
     onAction: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var rotation by remember { mutableFloatStateOf(0f) }
+    val rotationAnim = remember { Animatable(0f) }
+    val rotation = rotationAnim.value
+    val dialScope = rememberCoroutineScope()
+    val dialView = LocalView.current
+    val haptic = LocalHapticFeedback.current
+    var lastTick by remember { mutableIntStateOf(0) }
     val unfold by animateFloatAsState(
         targetValue = if (open) 1f else 0f,
         animationSpec = tween(420, easing = FastOutSlowInEasing),
@@ -1595,6 +1617,7 @@ private fun RotaryControlDial(
                 detectDragGestures(
                     onDragStart = { point ->
                         val center = Offset(size.width / 2f, size.height / 2f)
+                        lastTick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
                         lastAngle = Math.toDegrees(
                             kotlin.math.atan2(
                                 (point.y - center.y).toDouble(),
@@ -1612,10 +1635,23 @@ private fun RotaryControlDial(
                                 var delta = angle - lastAngle
                                 if (delta > 180f) delta -= 360f
                                 if (delta < -180f) delta += 360f
-                                rotation += delta
+                                rotationAnim.snapTo(rotationAnim.value + delta)
+                                val tick = (rotationAnim.value / (360f / actions.size / 2f)).roundToInt()
+                                if (tick != lastTick) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    dialView.playSoundEffect(SoundEffectConstants.CLICK)
+                                    lastTick = tick
+                                }
                             }
                             lastAngle = angle
                             change.consume()
+                        }
+                    },
+                    onDragEnd = {
+                        dialScope.launch {
+                            val step = 360f / actions.size
+                            val detent = (rotationAnim.value / step).roundToInt() * step
+                            rotationAnim.animateTo(detent, tween(170, easing = FastOutSlowInEasing))
                         }
                     }
                 )
@@ -1772,6 +1808,14 @@ private fun extractSharedUrl(intent: Intent?): String? {
         }
     }.getOrNull()
 }
+
+private fun isInstagramPostUrl(candidate: String): Boolean = runCatching {
+    val uri = Uri.parse(candidate)
+    val host = uri.host.orEmpty().lowercase()
+    val postType = uri.pathSegments.firstOrNull()?.lowercase()
+    (host == "instagram.com" || host.endsWith(".instagram.com")) &&
+        postType in setOf("p", "reel", "reels", "tv", "stories")
+}.getOrDefault(false)
 
 private fun sharedLinkMessage(url: String): String {
     val host = runCatching { Uri.parse(url).host.orEmpty().lowercase() }.getOrDefault("")
