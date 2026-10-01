@@ -460,8 +460,11 @@ class UniversalDownloadEngine(context: Context) {
         val audioExtensions = setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac")
         val isAudio = extension in audioExtensions || mime.startsWith("audio/")
         val safeName = file.name.replace(Regex("^uplay_\\d+_"), "")
+        // Android restricts the Video collection's RELATIVE_PATH to media folders
+        // (for example Movies/), so Download/UPlay must use the Downloads collection.
+        // The returned content URI remains directly playable by Media3.
         val collection = if (isAudio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-            else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
