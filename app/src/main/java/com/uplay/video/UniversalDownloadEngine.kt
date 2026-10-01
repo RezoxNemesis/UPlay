@@ -360,6 +360,8 @@ class UniversalDownloadEngine(context: Context) {
                 if (finalFile.exists()) finalFile.delete()
                 if (!part.renameTo(finalFile)) throw IllegalStateException("Could not finalize the downloaded file.")
                 return finalFile
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 lastError = error
                 if (attempt >= 3) throw error
