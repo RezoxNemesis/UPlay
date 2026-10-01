@@ -26,6 +26,9 @@ import android.content.Intent
 import android.provider.OpenableColumns
 import android.net.Uri
 import android.view.View
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.view.LayoutInflater
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -312,6 +315,8 @@ private fun UPlayHome(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val uiScope = rememberCoroutineScope()
+    var instagramLoginOpen by remember { mutableStateOf(false) }
+    var instagramSessionReady by remember { mutableStateOf(downloadEngine.hasInstagramSession()) }
     LaunchedEffect(url) {
         val candidate = extractFirstHttpUrl(url)
         if (candidate == null) {
@@ -336,6 +341,75 @@ private fun UPlayHome(
             }.getOrNull()
         }
         if (extractFirstHttpUrl(url) == candidate) downloadPreviewBitmap = bitmap
+    }
+    if (instagramLoginOpen) {
+        Dialog(onDismissRequest = { instagramLoginOpen = false }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 680.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = if (darkTheme) Color(0xFF111A29) else Color.White
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text(
+                        "Connect Instagram",
+                        color = if (darkTheme) Color.White else Color(0xFF101725),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Sign in here yourself, then tap Use session. UPlay stores the approved session locally on this device.",
+                        color = Muted,
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    AndroidView(
+                        factory = { viewContext ->
+                            CookieManager.getInstance().setAcceptCookie(true)
+                            WebView(viewContext).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.loadsImagesAutomatically = true
+                                webViewClient = WebViewClient()
+                                loadUrl("https://www.instagram.com/accounts/login/")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 300.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { instagramLoginOpen = false }) { Text("Cancel") }
+                        if (instagramSessionReady) {
+                            TextButton(onClick = {
+                                downloadEngine.clearInstagramSession()
+                                CookieManager.getInstance().removeAllCookies(null)
+                                CookieManager.getInstance().flush()
+                                instagramSessionReady = false
+                                instagramLoginOpen = false
+                                message = "Instagram session removed from UPlay."
+                            }) { Text("Disconnect") }
+                        }
+                        Button(onClick = {
+                            CookieManager.getInstance().flush()
+                            val cookies = CookieManager.getInstance()
+                                .getCookie("https://www.instagram.com").orEmpty()
+                            if (downloadEngine.saveInstagramCookies(cookies)) {
+                                instagramSessionReady = true
+                                instagramLoginOpen = false
+                                message = "Instagram session saved locally. Retry the public or account-authorized Reel link."
+                            } else {
+                                message = "Instagram session not detected yet. Finish signing in, then tap Use session."
+                            }
+                        }) { Text("Use session") }
+                    }
+                }
+            }
+        }
     }
     val configuration = LocalConfiguration.current
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1249,6 +1323,27 @@ private fun UPlayHome(
                                         )
                                     }
                                 }
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            OutlinedButton(
+                                onClick = { instagramLoginOpen = true },
+                                enabled = !downloadBusy,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB)
+                                )
+                            ) {
+                                Icon(
+                                    if (instagramSessionReady) Icons.Default.LockOpen else Icons.Default.Lock,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (instagramSessionReady) "Instagram session · Manage" else "Sign in to Instagram")
                             }
                         }
                         if (downloadBusy || downloadPreviewTitle != null) {

@@ -111,6 +111,48 @@ class UniversalDownloadEngine(context: Context) {
             .apply { mkdirs() }
     }
 
+    private val instagramCookiesFile: File by lazy {
+        File(appContext.filesDir, "instagram-cookies.txt")
+    }
+
+    fun hasInstagramSession(): Boolean =
+        instagramCookiesFile.isFile && runCatching {
+            instagramCookiesFile.readText().contains("\tsessionid\t")
+        }.getOrDefault(false)
+
+    /**
+     * Stores only cookies the user explicitly approves from the embedded Instagram login.
+     * The cookie jar stays in this app's private storage and is only passed to Instagram
+     * extraction requests; it is never uploaded by UPlay.
+     */
+    fun saveInstagramCookies(cookieHeader: String): Boolean {
+        val pairs = cookieHeader.split(';').mapNotNull { item ->
+            val separator = item.indexOf('=')
+            if (separator <= 0) null else {
+                val name = item.substring(0, separator).trim()
+                val value = item.substring(separator + 1).trim()
+                if (name.isBlank() || value.contains('\\n') || value.contains('\\r') ||
+                    name.contains('\\t') || value.contains('\\t')) null else name to value
+            }
+        }.distinctBy { it.first }
+        if (pairs.none { it.first == "sessionid" && it.second.isNotBlank() }) return false
+        val contents = buildString {
+            append("# Netscape HTTP Cookie File\\n")
+            pairs.forEach { (name, value) ->
+                append(".instagram.com\\tTRUE\\t/\\tTRUE\\t0\\t")
+                append(name).append('\\t').append(value).append('\\n')
+            }
+        }
+        return runCatching {
+            instagramCookiesFile.writeText(contents)
+            true
+        }.getOrDefault(false)
+    }
+
+    fun clearInstagramSession() {
+        runCatching { instagramCookiesFile.delete() }
+    }
+
     @Volatile private var initialized = false
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
@@ -330,6 +372,7 @@ class UniversalDownloadEngine(context: Context) {
             addOption("--retry-sleep", "http:1:3")
             if (url.contains("instagram.com", ignoreCase = true)) {
                 addOption("--add-headers", "Referer:https://www.instagram.com/")
+                if (hasInstagramSession()) addOption("--cookies", instagramCookiesFile.absolutePath)
             }
             if (userAgent != null) addOption("--user-agent", userAgent)
             addOption("-f", format)
