@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: uplay-apk-${{ github.ref }}
@@ -41,14 +41,37 @@ jobs:
         run: gradle --no-daemon --stacktrace testDebugUnitTest
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
-      - name: Verify APK exists and is non-empty
+      - name: Verify APK exists and generate checksum
         run: |
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          test "$(wc -c < "$APK")" -gt 1000000
+          ls -lh "$APK"
+          sha256sum "$APK" | tee "$APK.sha256"
       - name: Upload APK artifact
+        id: upload_apk
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: UPlay-debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
           if-no-files-found: error
           retention-days: 14
+      - name: Publish APK release if artifact storage is unavailable
+        if: steps.upload_apk.outcome == 'failure' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: uplay-build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: UPlay APK build ${{ github.run_number }}
+          body: |
+            Automated UPlay debug APK built from commit ${{ github.sha }}.
+            This release is a fallback because Actions artifact upload failed.
+          prerelease: true
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
