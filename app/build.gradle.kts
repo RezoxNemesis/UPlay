@@ -37,5 +37,6 @@ dependencies {
     implementation("dev.ffmpegkit-maintained:yt-dlp-android:2.0.2")
     // LGPL FFmpegKit enables reliable muxing of separate video/audio streams.
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.9")
+    testImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
