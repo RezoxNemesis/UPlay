@@ -9,6 +9,12 @@ import java.net.URI
  * control characters early keeps malformed links out of the downloader pipeline.
  */
 internal object DownloadUrlPolicy {
+    fun sessionHostForUrl(rawUrl: String): String? {
+        val normalized = normalizeHttpUrl(rawUrl) ?: return null
+        return runCatching { URI(normalized).host?.lowercase()?.removeSuffix(".") }
+            .getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
     fun normalizeHttpUrl(rawUrl: String): String? {
         val value = rawUrl.trim()
         if (value.isEmpty() || value.any { it.isISOControl() }) return null
