@@ -51,4 +51,12 @@ class DownloadUrlPolicyTest {
         )
     }
 
+    @Test
+    fun resolvesSessionHostFromTheCurrentSourceUrl() {
+        assertEquals("spankbang.com", DownloadUrlPolicy.sessionHostForUrl("https://spankbang.com/8kb89/video/example"))
+        assertEquals("www.instagram.com", DownloadUrlPolicy.sessionHostForUrl("https://www.instagram.com/reel/abc123/"))
+        assertEquals("example.com", DownloadUrlPolicy.sessionHostForUrl("HTTPS://EXAMPLE.COM:8443/watch"))
+        assertNull(DownloadUrlPolicy.sessionHostForUrl("not a URL"))
+    }
+
 }
