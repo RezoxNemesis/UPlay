@@ -1430,6 +1430,24 @@ private fun UPlayHome(
                     }
 
                     if (!landscape && !fullScreen) {
+                        OutlinedTextField(
+                            value = url,
+                            onValueChange = { url = it },
+                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().align(Alignment.CenterHorizontally),
+                            placeholder = { Text("Paste a direct video URL or shared link", color = Muted) },
+                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = Green) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF8DD8FF), unfocusedBorderColor = Color(0xFF2A4055),
+                                focusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
+                                unfocusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
+                                cursorColor = Color(0xFF8DD8FF),
+                                focusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White,
+                                unfocusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White
+                            )
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(
                                 onClick = { webPlaybackUrl = null; picker.launch(arrayOf("video/*")) },
@@ -1532,34 +1550,69 @@ private fun UPlayHome(
                                 }
                             }
                         }
-                        Row(
+                        Card(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (systemDark) Color(0xFF101A29) else Color(0xFFEAF5FF)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (systemDark) Color(0xFF26384B) else Color(0xFFD4E5F4)
+                            )
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    val candidate = extractFirstHttpUrl(url)
-                                    val host = runCatching { Uri.parse(candidate ?: "").host.orEmpty().lowercase() }
-                                        .getOrDefault("")
-                                    siteSessionHost = host.takeIf { it.isNotBlank() } ?: "www.instagram.com"
-                                    siteSessionReady = downloadEngine.hasSiteSession(siteSessionHost) ||
-                                        ((siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")) &&
-                                            downloadEngine.hasInstagramSession())
-                                    instagramLoginOpen = true
-                                },
-                                enabled = !downloadBusy,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB)
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(11.dp)
                             ) {
-                                Icon(
-                                    if (siteSessionReady) Icons.Default.LockOpen else Icons.Default.Lock,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (siteSessionReady) "${siteSessionHost.removePrefix("www.")} session · Manage" else "Sign in to ${siteSessionHost.removePrefix("www.")}")
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (siteSessionReady) Color(0xFF173A3B) else Color(0xFF1B2B42)
+                                ) {
+                                    Icon(
+                                        if (siteSessionReady) Icons.Default.LockOpen else Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = if (siteSessionReady) Color(0xFF7FE7C4) else Color(0xFF8DD8FF),
+                                        modifier = Modifier.padding(11.dp).size(20.dp)
+                                    )
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text("SOURCE SESSION", color = Muted, fontSize = 9.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        siteSessionHost.removePrefix("www."),
+                                        color = if (systemDark) Color.White else Color(0xFF101725),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        if (siteSessionReady) "Session ready for protected media" else "Sign in to access media that requires a session",
+                                        color = Muted,
+                                        fontSize = 10.sp,
+                                        maxLines = 2
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        val candidate = extractFirstHttpUrl(url)
+                                        val host = runCatching { Uri.parse(candidate ?: "").host.orEmpty().lowercase() }
+                                            .getOrDefault("")
+                                        siteSessionHost = host.takeIf { it.isNotBlank() } ?: "www.instagram.com"
+                                        siteSessionReady = downloadEngine.hasSiteSession(siteSessionHost) ||
+                                            ((siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")) &&
+                                                downloadEngine.hasInstagramSession())
+                                        instagramLoginOpen = true
+                                    },
+                                    enabled = !downloadBusy,
+                                    shape = RoundedCornerShape(11.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB)
+                                    )
+                                ) {
+                                    Text(if (siteSessionReady) "Manage" else "Sign in", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                         if (downloadBusy || downloadPreviewTitle != null) {
@@ -1641,24 +1694,6 @@ private fun UPlayHome(
                             Spacer(Modifier.width(8.dp))
                             Text("Open music library")
                         }
-                        OutlinedTextField(
-                            value = url,
-                            onValueChange = { url = it },
-                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().align(Alignment.CenterHorizontally),
-                            placeholder = { Text("Paste a direct video URL or shared link", color = Muted) },
-                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = Green) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF8DD8FF), unfocusedBorderColor = Color(0xFF2A4055),
-                                focusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
-                                unfocusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
-                                cursorColor = Color(0xFF8DD8FF),
-                                focusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White,
-                                unfocusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White
-                            )
-                        )
                         if (message.isNotBlank()) {
                             Text(
                                 text = playbackError ?: message,
