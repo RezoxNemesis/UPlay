@@ -331,7 +331,16 @@ private fun UPlayHome(
             downloadPreviewBitmap = null
             return@LaunchedEffect
         }
-        val sourceHost = runCatching { Uri.parse(candidate).host.orEmpty() }.getOrDefault("")
+        // Keep the session controls bound to the URL currently in the field. Previously
+        // the session host was updated only when the user opened the dialog, which could
+        // leave the UI displaying a stale Instagram session while another site was active.
+        val sourceHost = DownloadUrlPolicy.sessionHostForUrl(candidate).orEmpty()
+        if (sourceHost.isNotBlank()) {
+            siteSessionHost = sourceHost
+            siteSessionReady = downloadEngine.hasSiteSession(sourceHost) ||
+                ((sourceHost == "instagram.com" || sourceHost.endsWith(".instagram.com")) &&
+                    downloadEngine.hasInstagramSession())
+        }
         downloadPreviewTitle = "Looking up $sourceHost…"
         downloadPreviewBitmap = null
         delay(550)
