@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   build:
-    name: Build and verify debug APK
+    name: Build, test and launch debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,6 +49,34 @@ jobs:
           test "$(wc -c < "$APK")" -gt 1000000
           ls -lh "$APK"
           sha256sum "$APK" | tee "$APK.sha256"
+      - name: Enable hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Launch UPlay in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 2048M
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/scripts/uplay-startup-smoke.sh
+      - name: Upload startup diagnostics
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: UPlay-startup-diagnostics
+          path: app/build/diagnostics/**
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload APK artifact
         id: upload_apk
         continue-on-error: true
