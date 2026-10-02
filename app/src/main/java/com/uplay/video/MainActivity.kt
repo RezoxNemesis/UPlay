@@ -331,7 +331,16 @@ private fun UPlayHome(
             downloadPreviewBitmap = null
             return@LaunchedEffect
         }
-        val sourceHost = runCatching { Uri.parse(candidate).host.orEmpty() }.getOrDefault("")
+        // Keep the session controls bound to the URL currently in the field. Previously
+        // the session host was updated only when the user opened the dialog, which could
+        // leave the UI displaying a stale Instagram session while another site was active.
+        val sourceHost = DownloadUrlPolicy.sessionHostForUrl(candidate).orEmpty()
+        if (sourceHost.isNotBlank()) {
+            siteSessionHost = sourceHost
+            siteSessionReady = downloadEngine.hasSiteSession(sourceHost) ||
+                ((sourceHost == "instagram.com" || sourceHost.endsWith(".instagram.com")) &&
+                    downloadEngine.hasInstagramSession())
+        }
         downloadPreviewTitle = "Looking up $sourceHost…"
         downloadPreviewBitmap = null
         delay(550)
@@ -735,8 +744,10 @@ private fun UPlayHome(
                     detail.contains("private", true) || detail.contains("login", true) ||
                         detail.contains("sign in", true) || detail.contains("authentication", true) ->
                         "This source requires access UPlay doesn't currently have. Try a public post URL, or open the post in its official app."
-                    detail.contains("HTTP Error 403", true) || detail.contains("forbidden", true) ->
-                        "The source refused the download request (403). It may require an authorized session or restrict external downloads."
+                    detail.contains("HTTP Error 403", true) || detail.contains("forbidden", true) -> {
+                        val sourceName = parsed?.host.orEmpty().removePrefix("www.").ifBlank { "this site" }
+                        "HTTP 403 from $sourceName. Tap “Sign in to $sourceName” above, sign in in UPlay’s site window, choose “Use session,” then retry. If the site still blocks external downloads, UPlay cannot override that restriction."
+                    }
                     detail.contains("HTTP Error 429", true) || detail.contains("too many requests", true) ->
                         "The source is rate-limiting requests. Wait a while, then retry."
                     detail.contains("primary directory", true) || detail.contains("not allowed for content", true) ->
@@ -1002,6 +1013,13 @@ private fun UPlayHome(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Image(
+                                painter = painterResource(R.drawable.uplay_logo),
+                                contentDescription = "UPlay logo",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                            )
+                            Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text("U P L A Y   /   PLAYER", fontSize = 10.sp, letterSpacing = 1.5.sp, color = Color(0xFF8DD8FF), fontWeight = FontWeight.Bold)
                                 Text(
@@ -1038,6 +1056,23 @@ private fun UPlayHome(
                                 shape = if (fullScreen || landscape) RoundedCornerShape(0.dp) else RoundedCornerShape(26.dp)
                             )
                     ) {
+                        // Real bundled artwork asset behind the empty-player state; controls
+                        // remain native Compose elements above this decorative layer.
+                        if (!selected && webPlaybackUrl == null) {
+                            Image(
+                                painter = painterResource(R.drawable.uplay_hero_landscape),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Box(
+                                Modifier.fillMaxSize().background(
+                                    Brush.verticalGradient(
+                                        listOf(Color(0x66101D36), Color(0xB8070D18), Color(0xF2070D18))
+                                    )
+                                )
+                            )
+                        }
                         if (webPlaybackUrl != null) {
                             AndroidView(
                                 factory = { viewContext ->
@@ -1395,6 +1430,24 @@ private fun UPlayHome(
                     }
 
                     if (!landscape && !fullScreen) {
+                        OutlinedTextField(
+                            value = url,
+                            onValueChange = { url = it },
+                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().align(Alignment.CenterHorizontally),
+                            placeholder = { Text("Paste a direct video URL or shared link", color = Muted) },
+                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = Green) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF8DD8FF), unfocusedBorderColor = Color(0xFF2A4055),
+                                focusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
+                                unfocusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
+                                cursorColor = Color(0xFF8DD8FF),
+                                focusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White,
+                                unfocusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White
+                            )
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(
                                 onClick = { webPlaybackUrl = null; picker.launch(arrayOf("video/*")) },
@@ -1497,34 +1550,69 @@ private fun UPlayHome(
                                 }
                             }
                         }
-                        Row(
+                        Card(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (systemDark) Color(0xFF101A29) else Color(0xFFEAF5FF)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (systemDark) Color(0xFF26384B) else Color(0xFFD4E5F4)
+                            )
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    val candidate = extractFirstHttpUrl(url)
-                                    val host = runCatching { Uri.parse(candidate ?: "").host.orEmpty().lowercase() }
-                                        .getOrDefault("")
-                                    siteSessionHost = host.takeIf { it.isNotBlank() } ?: "www.instagram.com"
-                                    siteSessionReady = downloadEngine.hasSiteSession(siteSessionHost) ||
-                                        ((siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")) &&
-                                            downloadEngine.hasInstagramSession())
-                                    instagramLoginOpen = true
-                                },
-                                enabled = !downloadBusy,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB)
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(11.dp)
                             ) {
-                                Icon(
-                                    if (siteSessionReady) Icons.Default.LockOpen else Icons.Default.Lock,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (siteSessionReady) "${siteSessionHost.removePrefix("www.")} session · Manage" else "Sign in to ${siteSessionHost.removePrefix("www.")}")
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (siteSessionReady) Color(0xFF173A3B) else Color(0xFF1B2B42)
+                                ) {
+                                    Icon(
+                                        if (siteSessionReady) Icons.Default.LockOpen else Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = if (siteSessionReady) Color(0xFF7FE7C4) else Color(0xFF8DD8FF),
+                                        modifier = Modifier.padding(11.dp).size(20.dp)
+                                    )
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text("SOURCE SESSION", color = Muted, fontSize = 9.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        siteSessionHost.removePrefix("www."),
+                                        color = if (systemDark) Color.White else Color(0xFF101725),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        if (siteSessionReady) "Session ready for protected media" else "Sign in to access media that requires a session",
+                                        color = Muted,
+                                        fontSize = 10.sp,
+                                        maxLines = 2
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        val candidate = extractFirstHttpUrl(url)
+                                        val host = runCatching { Uri.parse(candidate ?: "").host.orEmpty().lowercase() }
+                                            .getOrDefault("")
+                                        siteSessionHost = host.takeIf { it.isNotBlank() } ?: "www.instagram.com"
+                                        siteSessionReady = downloadEngine.hasSiteSession(siteSessionHost) ||
+                                            ((siteSessionHost == "instagram.com" || siteSessionHost.endsWith(".instagram.com")) &&
+                                                downloadEngine.hasInstagramSession())
+                                        instagramLoginOpen = true
+                                    },
+                                    enabled = !downloadBusy,
+                                    shape = RoundedCornerShape(11.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB)
+                                    )
+                                ) {
+                                    Text(if (siteSessionReady) "Manage" else "Sign in", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                         if (downloadBusy || downloadPreviewTitle != null) {
@@ -1596,34 +1684,6 @@ private fun UPlayHome(
                             )
                             Text(message, color = Muted, fontSize = 12.sp, maxLines = 2)
                         }
-                        OutlinedButton(
-                            onClick = { audioPicker.launch(arrayOf("audio/*")) },
-                            modifier = Modifier.fillMaxWidth().height(42.dp),
-                            shape = RoundedCornerShape(15.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
-                        ) {
-                            Icon(Icons.Default.GraphicEq, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Open music library")
-                        }
-                        OutlinedTextField(
-                            value = url,
-                            onValueChange = { url = it },
-                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().align(Alignment.CenterHorizontally),
-                            placeholder = { Text("Paste a direct video URL or shared link", color = Muted) },
-                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = Green) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF8DD8FF), unfocusedBorderColor = Color(0xFF2A4055),
-                                focusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
-                                unfocusedTextColor = if (darkTheme) Color.White else Color(0xFF101725),
-                                cursorColor = Color(0xFF8DD8FF),
-                                focusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White,
-                                unfocusedContainerColor = if (darkTheme) Color(0xFF0E1724) else Color.White
-                            )
-                        )
                         if (message.isNotBlank()) {
                             Text(
                                 text = playbackError ?: message,

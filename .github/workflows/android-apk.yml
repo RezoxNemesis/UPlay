@@ -3,10 +3,12 @@ name: UPlay APK
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: uplay-apk-${{ github.ref }}
@@ -14,9 +16,9 @@ concurrency:
 
 jobs:
   build:
-    name: Build and verify debug APK
+    name: Build, test and launch debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,16 +37,81 @@ jobs:
           packages: platform-tools
       - name: Install Android SDK platform
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Run downloader unit tests
+        run: gradle --no-daemon --stacktrace testDebugUnitTest
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
-      - name: Verify APK exists and is non-empty
+      - name: Verify APK exists and generate checksum
         run: |
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          test "$(wc -c < "$APK")" -gt 1000000
+          ls -lh "$APK"
+          sha256sum "$APK" | tee "$APK.sha256"
+      - name: Detect Android emulator acceleration
+        id: emulator_accel
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+              echo "available=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::KVM is not usable; falling back to software emulation."
+            fi
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No /dev/kvm on this runner; falling back to software emulation."
+          fi
+      - name: Launch UPlay in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 2048M
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: ${{ steps.emulator_accel.outputs.available != 'true' }}
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/scripts/uplay-startup-smoke.sh
+      - name: Upload startup diagnostics
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: UPlay-startup-diagnostics
+          path: app/build/diagnostics/**
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload APK artifact
+        id: upload_apk
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: UPlay-debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
           if-no-files-found: error
           retention-days: 14
+      - name: Publish APK release if artifact storage is unavailable
+        if: steps.upload_apk.outcome == 'failure' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: uplay-build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: UPlay APK build ${{ github.run_number }}
+          body: |
+            Automated UPlay debug APK built from commit ${{ github.sha }}.
+            This release is a fallback because Actions artifact upload failed.
+          prerelease: true
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256

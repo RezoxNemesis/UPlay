@@ -39,13 +39,12 @@ class UniversalDownloadEngine(context: Context) {
      * a fallback title; this does not attempt to authenticate or bypass access checks.
      */
     suspend fun preview(rawUrl: String): DownloadPreview? = withContext(Dispatchers.IO) {
-        val parsed = runCatching { Uri.parse(rawUrl) }.getOrNull() ?: return@withContext null
-        if (!(parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) ||
-            parsed.host.isNullOrBlank()) return@withContext null
+        val normalizedUrl = DownloadUrlPolicy.normalizeHttpUrl(rawUrl) ?: return@withContext null
+        val parsed = Uri.parse(normalizedUrl)
         val fallbackTitle = parsed.lastPathSegment.orEmpty()
             .substringBefore('?').replace(Regex("[-_]+"), " ")
             .takeIf { it.isNotBlank() } ?: parsed.host.orEmpty()
-        val connection = (URL(rawUrl).openConnection() as? HttpURLConnection)
+        val connection = (URL(normalizedUrl).openConnection() as? HttpURLConnection)
             ?: return@withContext DownloadPreview(fallbackTitle, null)
         try {
             connection.instanceFollowRedirects = true
@@ -287,10 +286,9 @@ class UniversalDownloadEngine(context: Context) {
         quality: String = "best",
         onProgress: (Float, String) -> Unit
     ): Uri = withContext(Dispatchers.IO) {
-        val url = rawUrl.trim()
+        val url = DownloadUrlPolicy.normalizeHttpUrl(rawUrl)
+            ?: throw IllegalArgumentException("Enter a valid HTTP(S) video link without embedded credentials.")
         val parsed = Uri.parse(url)
-        require((parsed.scheme.equals("https", true) || parsed.scheme.equals("http", true)) &&
-            !parsed.host.isNullOrBlank()) { "Enter a valid HTTP(S) video link." }
         initialize()
         if (!workDir.exists() && !workDir.mkdirs()) {
             throw IllegalStateException("UPlay couldn't create its temporary download folder.")
