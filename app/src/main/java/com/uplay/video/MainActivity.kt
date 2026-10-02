@@ -1684,16 +1684,6 @@ private fun UPlayHome(
                             )
                             Text(message, color = Muted, fontSize = 12.sp, maxLines = 2)
                         }
-                        OutlinedButton(
-                            onClick = { audioPicker.launch(arrayOf("audio/*")) },
-                            modifier = Modifier.fillMaxWidth().height(42.dp),
-                            shape = RoundedCornerShape(15.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = if (systemDark) Color(0xFF8DD8FF) else Color(0xFF167DDB))
-                        ) {
-                            Icon(Icons.Default.GraphicEq, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Open music library")
-                        }
                         if (message.isNotBlank()) {
                             Text(
                                 text = playbackError ?: message,
