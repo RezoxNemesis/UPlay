@@ -1013,6 +1013,13 @@ private fun UPlayHome(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Image(
+                                painter = painterResource(R.drawable.uplay_logo),
+                                contentDescription = "UPlay logo",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                            )
+                            Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text("U P L A Y   /   PLAYER", fontSize = 10.sp, letterSpacing = 1.5.sp, color = Color(0xFF8DD8FF), fontWeight = FontWeight.Bold)
                                 Text(
