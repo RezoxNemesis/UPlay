@@ -1056,6 +1056,23 @@ private fun UPlayHome(
                                 shape = if (fullScreen || landscape) RoundedCornerShape(0.dp) else RoundedCornerShape(26.dp)
                             )
                     ) {
+                        // Real bundled artwork asset behind the empty-player state; controls
+                        // remain native Compose elements above this decorative layer.
+                        if (!selected && webPlaybackUrl == null) {
+                            Image(
+                                painter = painterResource(R.drawable.uplay_hero_landscape),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Box(
+                                Modifier.fillMaxSize().background(
+                                    Brush.verticalGradient(
+                                        listOf(Color(0x66101D36), Color(0xB8070D18), Color(0xF2070D18))
+                                    )
+                                )
+                            )
+                        }
                         if (webPlaybackUrl != null) {
                             AndroidView(
                                 factory = { viewContext ->
