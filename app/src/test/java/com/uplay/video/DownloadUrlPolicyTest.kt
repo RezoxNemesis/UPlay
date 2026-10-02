@@ -31,4 +31,24 @@ class DownloadUrlPolicyTest {
     fun rejectsControlCharacters() {
         assertNull(DownloadUrlPolicy.normalizeHttpUrl("https://example.com/\nvideo"))
     }
+    @Test
+    fun acceptsCaseInsensitiveSchemesAndExplicitPorts() {
+        assertEquals("HTTPS://example.com:8443/watch", DownloadUrlPolicy.normalizeHttpUrl("HTTPS://example.com:8443/watch"))
+        assertEquals("http://example.com:8080/video", DownloadUrlPolicy.normalizeHttpUrl("http://example.com:8080/video"))
+    }
+
+    @Test
+    fun rejectsInvalidPortsAndWhitespaceInsideAuthority() {
+        assertNull(DownloadUrlPolicy.normalizeHttpUrl("https://example.com:invalid/video"))
+        assertNull(DownloadUrlPolicy.normalizeHttpUrl("https://exa mple.com/video"))
+    }
+
+    @Test
+    fun preservesQueryAndFragmentForValidLinks() {
+        assertEquals(
+            "https://example.com/watch?id=42#player",
+            DownloadUrlPolicy.normalizeHttpUrl("https://example.com/watch?id=42#player")
+        )
+    }
+
 }
