@@ -744,8 +744,10 @@ private fun UPlayHome(
                     detail.contains("private", true) || detail.contains("login", true) ||
                         detail.contains("sign in", true) || detail.contains("authentication", true) ->
                         "This source requires access UPlay doesn't currently have. Try a public post URL, or open the post in its official app."
-                    detail.contains("HTTP Error 403", true) || detail.contains("forbidden", true) ->
-                        "The source refused the download request (403). It may require an authorized session or restrict external downloads."
+                    detail.contains("HTTP Error 403", true) || detail.contains("forbidden", true) -> {
+                        val sourceName = parsed?.host.orEmpty().removePrefix("www.").ifBlank { "this site" }
+                        "HTTP 403 from $sourceName. Tap “Sign in to $sourceName” above, sign in in UPlay’s site window, choose “Use session,” then retry. If the site still blocks external downloads, UPlay cannot override that restriction."
+                    }
                     detail.contains("HTTP Error 429", true) || detail.contains("too many requests", true) ->
                         "The source is rate-limiting requests. Wait a while, then retry."
                     detail.contains("primary directory", true) || detail.contains("not allowed for content", true) ->
